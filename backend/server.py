@@ -432,7 +432,9 @@ async def send_message(msg: MessageCreate, user: User = Depends(get_current_user
     msg_dict = message.model_dump()
     msg_dict["created_at"] = msg_dict["created_at"].isoformat()
     
-    await db.messages.insert_one(msg_dict)
+    # Create a copy for insertion to avoid _id contamination
+    insert_dict = msg_dict.copy()
+    await db.messages.insert_one(insert_dict)
     return msg_dict
 
 # ============== TRADE ENDPOINTS ==============
