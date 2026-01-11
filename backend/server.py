@@ -328,7 +328,9 @@ async def create_item(item_data: ItemCreate, user: User = Depends(get_current_us
     item_dict = item.model_dump()
     item_dict["created_at"] = item_dict["created_at"].isoformat()
     
-    await db.items.insert_one(item_dict)
+    # Create a copy for insertion to avoid _id contamination
+    insert_dict = item_dict.copy()
+    await db.items.insert_one(insert_dict)
     
     # Add/update category
     await db.categories.update_one(
