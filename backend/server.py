@@ -470,7 +470,9 @@ async def create_trade(trade_data: TradeCreate, user: User = Depends(get_current
     trade_dict = trade.model_dump()
     trade_dict["created_at"] = trade_dict["created_at"].isoformat()
     
-    await db.trades.insert_one(trade_dict)
+    # Create a copy for insertion to avoid _id contamination
+    insert_dict = trade_dict.copy()
+    await db.trades.insert_one(insert_dict)
     return trade_dict
 
 @api_router.get("/trades")
