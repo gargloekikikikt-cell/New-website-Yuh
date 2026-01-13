@@ -201,6 +201,27 @@ async def get_current_user(request: Request) -> User:
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     
+    # Check if user is suspended
+    if user.get("is_suspended"):
+        suspended_until = user.get("suspended_until")
+        if suspended_until:
+            if isinstance(suspended_until, str):
+                suspended_until = datetime.fromisoformat(suspended_until)
+            if suspended_until.tzinfo is None:
+                suspended_until = suspended_until.replace(tzinfo=timezone.utc)
+            if suspended_until > datetime.now(timezone.utc):
+                raise HTTPException(
+                    status_code=403, 
+                    detail=f"Account suspended until {suspended_until.strftime('%Y-%m-%d %H:%M UTC')}. Reason: {user.get('suspension_reason', 'No reason provided')}"
+                )
+            else:
+                # Suspension expired, auto-unsuspend
+                await db.users.update_one(
+                    {"user_id": user["user_id"]},
+                    {"$set": {"is_suspended": False, "suspended_until": None, "suspension_reason": None}}
+                )
+                user["is_suspended"] = False
+    
     return User(**user)
 
 async def get_admin_user(request: Request) -> User:
