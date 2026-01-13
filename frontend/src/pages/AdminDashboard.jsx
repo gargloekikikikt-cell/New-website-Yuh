@@ -553,7 +553,7 @@ const AdminDashboard = () => {
                     <SelectValue placeholder="Parent (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None (main category)</SelectItem>
+                    <SelectItem value="none">None (main category)</SelectItem>
                     {categories.main.map((cat) => (
                       <SelectItem key={cat.name} value={cat.name} className="capitalize">{cat.name}</SelectItem>
                     ))}

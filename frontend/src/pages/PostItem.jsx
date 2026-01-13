@@ -452,7 +452,7 @@ const PostItem = () => {
                   <SelectValue placeholder="None (main category)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None (main category)</SelectItem>
+                  <SelectItem value="none">None (main category)</SelectItem>
                   {categories.map((cat) => (
                     <SelectItem key={cat.name} value={cat.name} className="capitalize">
                       {cat.name}
