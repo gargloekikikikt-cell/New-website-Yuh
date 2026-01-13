@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import httpx
 import base64
-import aiofiles
+import math
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -21,6 +21,9 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+
+# Admin email
+ADMIN_EMAIL = "creatorbennett@gmail.com"
 
 # Create the main app
 app = FastAPI()
@@ -46,6 +49,8 @@ class User(BaseModel):
     trade_points: int = 0
     rating: Optional[float] = None
     rating_count: int = 0
+    is_admin: bool = False
+    portfolio: List[str] = []  # List of item_ids
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class UserUpdate(BaseModel):
@@ -59,7 +64,11 @@ class Item(BaseModel):
     description: Optional[str] = None
     image: str
     category: str
+    subcategory: Optional[str] = None
+    bottom_category: Optional[str] = None
     is_available: bool = True
+    boost_score: float = 0.0
+    pin_count: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class ItemCreate(BaseModel):
@@ -67,10 +76,14 @@ class ItemCreate(BaseModel):
     description: Optional[str] = None
     image: str
     category: str
+    subcategory: Optional[str] = None
+    bottom_category: Optional[str] = None
 
 class Category(BaseModel):
     name: str
     click_count: int = 0
+    parent_category: Optional[str] = None  # For subcategories
+    level: int = 0  # 0=main, 1=sub, 2=bottom
 
 class Message(BaseModel):
     message_id: str = Field(default_factory=lambda: f"msg_{uuid.uuid4().hex[:12]}")
@@ -105,6 +118,46 @@ class TradeCreate(BaseModel):
 class RatingCreate(BaseModel):
     rating: int
 
+class Report(BaseModel):
+    report_id: str = Field(default_factory=lambda: f"report_{uuid.uuid4().hex[:12]}")
+    reporter_id: str
+    report_type: str  # "user", "item", "category"
+    target_id: str  # user_id, item_id, or category name
+    reason: str
+    status: str = "pending"  # pending, reviewed, resolved
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ReportCreate(BaseModel):
+    report_type: str
+    target_id: str
+    reason: str
+
+class Announcement(BaseModel):
+    announcement_id: str = Field(default_factory=lambda: f"ann_{uuid.uuid4().hex[:12]}")
+    message: str
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class AnnouncementCreate(BaseModel):
+    message: str
+
+class Pin(BaseModel):
+    pin_id: str = Field(default_factory=lambda: f"pin_{uuid.uuid4().hex[:12]}")
+    user_id: str
+    item_id: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class Settings(BaseModel):
+    setting_id: str = "global_settings"
+    max_portfolio_items: int = 7
+
+class PortfolioUpdate(BaseModel):
+    item_ids: List[str]
+
+class SubcategoryCreate(BaseModel):
+    name: str
+    parent_category: str
+
 # ============== AUTH HELPERS ==============
 
 async def get_current_user(request: Request) -> User:
@@ -137,12 +190,71 @@ async def get_current_user(request: Request) -> User:
     
     return User(**user)
 
+async def get_admin_user(request: Request) -> User:
+    """Get current user and verify they are admin"""
+    user = await get_current_user(request)
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
 async def get_optional_user(request: Request) -> Optional[User]:
     """Get current user if authenticated, otherwise return None"""
     try:
         return await get_current_user(request)
     except HTTPException:
         return None
+
+# ============== BOOSTING ALGORITHM ==============
+
+def calculate_boost_score(pins: List[dict]) -> float:
+    """
+    Calculate boost score based on pins with time decay.
+    
+    Algorithm:
+    - Each pin contributes: base_points / (1 + days_old * decay_rate)
+    - base_points = 10 (each pin's initial value)
+    - decay_rate = 0.1 (how fast pins lose value)
+    
+    This means:
+    - A pin from today = 10 points
+    - A pin from 10 days ago = 10 / (1 + 1) = 5 points
+    - A pin from 30 days ago = 10 / (1 + 3) = 2.5 points
+    
+    Benefits:
+    1. Recent engagement is rewarded more
+    2. Consistent popularity over time still accumulates
+    3. Old items don't stay boosted forever without new pins
+    """
+    BASE_POINTS = 10.0
+    DECAY_RATE = 0.1
+    
+    total_score = 0.0
+    now = datetime.now(timezone.utc)
+    
+    for pin in pins:
+        pin_date = pin.get("created_at")
+        if isinstance(pin_date, str):
+            pin_date = datetime.fromisoformat(pin_date.replace('Z', '+00:00'))
+        if pin_date.tzinfo is None:
+            pin_date = pin_date.replace(tzinfo=timezone.utc)
+        
+        days_old = (now - pin_date).days
+        decay_factor = 1 + (days_old * DECAY_RATE)
+        pin_score = BASE_POINTS / decay_factor
+        total_score += pin_score
+    
+    return round(total_score, 2)
+
+async def update_item_boost(item_id: str):
+    """Recalculate and update an item's boost score"""
+    pins = await db.pins.find({"item_id": item_id}, {"_id": 0}).to_list(1000)
+    boost_score = calculate_boost_score(pins)
+    pin_count = len(pins)
+    await db.items.update_one(
+        {"item_id": item_id},
+        {"$set": {"boost_score": boost_score, "pin_count": pin_count}}
+    )
+    return boost_score
 
 # ============== AUTH ENDPOINTS ==============
 
@@ -165,6 +277,9 @@ async def create_session(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid session_id")
         auth_data = resp.json()
     
+    # Check if admin
+    is_admin = auth_data["email"].lower() == ADMIN_EMAIL.lower()
+    
     # Check if user exists
     existing_user = await db.users.find_one({"email": auth_data["email"]}, {"_id": 0})
     
@@ -175,7 +290,8 @@ async def create_session(request: Request, response: Response):
             {"user_id": user_id},
             {"$set": {
                 "name": auth_data["name"],
-                "picture": auth_data.get("picture")
+                "picture": auth_data.get("picture"),
+                "is_admin": is_admin
             }}
         )
     else:
@@ -190,20 +306,23 @@ async def create_session(request: Request, response: Response):
             "trade_points": 0,
             "rating": None,
             "rating_count": 0,
+            "is_admin": is_admin,
+            "portfolio": [],
             "created_at": datetime.now(timezone.utc).isoformat()
         }
-        await db.users.insert_one(new_user)
+        await db.users.insert_one(new_user.copy())
     
     # Create session
     session_token = auth_data.get("session_token", f"sess_{uuid.uuid4().hex}")
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     
-    await db.user_sessions.insert_one({
+    session_doc = {
         "user_id": user_id,
         "session_token": session_token,
         "expires_at": expires_at.isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat()
-    })
+    }
+    await db.user_sessions.insert_one(session_doc.copy())
     
     # Set cookie
     response.set_cookie(
@@ -271,11 +390,82 @@ async def update_profile(update: UserUpdate, user: User = Depends(get_current_us
     updated_user = await db.users.find_one({"user_id": user.user_id}, {"_id": 0})
     return updated_user
 
+@api_router.delete("/users/account")
+async def delete_account(user: User = Depends(get_current_user)):
+    """Delete current user's account and all their data"""
+    # Delete user's items
+    await db.items.delete_many({"user_id": user.user_id})
+    # Delete user's messages
+    await db.messages.delete_many({"$or": [{"sender_id": user.user_id}, {"receiver_id": user.user_id}]})
+    # Delete user's trades
+    await db.trades.delete_many({"$or": [{"owner_id": user.user_id}, {"trader_id": user.user_id}]})
+    # Delete user's pins
+    await db.pins.delete_many({"user_id": user.user_id})
+    # Delete user's sessions
+    await db.user_sessions.delete_many({"user_id": user.user_id})
+    # Delete user's reports
+    await db.reports.delete_many({"reporter_id": user.user_id})
+    # Delete user
+    await db.users.delete_one({"user_id": user.user_id})
+    
+    return {"message": "Account deleted successfully"}
+
+@api_router.put("/users/portfolio")
+async def update_portfolio(portfolio: PortfolioUpdate, user: User = Depends(get_current_user)):
+    """Update user's portfolio (ordered list of item_ids)"""
+    # Get settings for max items
+    settings = await db.settings.find_one({"setting_id": "global_settings"}, {"_id": 0})
+    max_items = settings.get("max_portfolio_items", 7) if settings else 7
+    
+    if len(portfolio.item_ids) > max_items:
+        raise HTTPException(status_code=400, detail=f"Portfolio can have at most {max_items} items")
+    
+    # Verify all items belong to user and exist
+    for item_id in portfolio.item_ids:
+        item = await db.items.find_one({"item_id": item_id, "user_id": user.user_id}, {"_id": 0})
+        if not item:
+            raise HTTPException(status_code=400, detail=f"Item {item_id} not found or doesn't belong to you")
+    
+    await db.users.update_one(
+        {"user_id": user.user_id},
+        {"$set": {"portfolio": portfolio.item_ids}}
+    )
+    
+    updated_user = await db.users.find_one({"user_id": user.user_id}, {"_id": 0})
+    return updated_user
+
+@api_router.get("/users/{user_id}/portfolio")
+async def get_user_portfolio(user_id: str):
+    """Get user's portfolio items ordered by boost score"""
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    portfolio_ids = user.get("portfolio", [])
+    if not portfolio_ids:
+        return []
+    
+    # Get items and sort by boost_score (descending)
+    items = await db.items.find(
+        {"item_id": {"$in": portfolio_ids}},
+        {"_id": 0}
+    ).to_list(100)
+    
+    # Sort by boost_score descending
+    items.sort(key=lambda x: x.get("boost_score", 0), reverse=True)
+    
+    return items
+
 # ============== ITEM ENDPOINTS ==============
 
 @api_router.get("/items")
-async def get_items(category: Optional[str] = None, user_id: Optional[str] = None):
-    """Get all available items, optionally filtered by category or user"""
+async def get_items(
+    category: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    bottom_category: Optional[str] = None,
+    user_id: Optional[str] = None
+):
+    """Get all available items, optionally filtered by category or user, sorted by boost"""
     query = {"is_available": True}
     if category:
         query["category"] = category
@@ -285,10 +475,15 @@ async def get_items(category: Optional[str] = None, user_id: Optional[str] = Non
             {"$inc": {"click_count": 1}},
             upsert=True
         )
+    if subcategory:
+        query["subcategory"] = subcategory
+    if bottom_category:
+        query["bottom_category"] = bottom_category
     if user_id:
         query["user_id"] = user_id
     
-    items = await db.items.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    # Sort by boost_score descending, then by created_at descending
+    items = await db.items.find(query, {"_id": 0}).sort([("boost_score", -1), ("created_at", -1)]).to_list(100)
     
     # Convert datetime strings if needed
     for item in items:
@@ -317,12 +512,28 @@ async def create_item(item_data: ItemCreate, user: User = Depends(get_current_us
     if " " in category:
         raise HTTPException(status_code=400, detail="Category must be a single word")
     
+    # Validate subcategory if provided
+    subcategory = None
+    if item_data.subcategory:
+        subcategory = item_data.subcategory.strip().lower()
+        if " " in subcategory:
+            raise HTTPException(status_code=400, detail="Subcategory must be a single word")
+    
+    # Validate bottom_category if provided
+    bottom_category = None
+    if item_data.bottom_category:
+        bottom_category = item_data.bottom_category.strip().lower()
+        if " " in bottom_category:
+            raise HTTPException(status_code=400, detail="Bottom category must be a single word")
+    
     item = Item(
         user_id=user.user_id,
         title=item_data.title,
         description=item_data.description,
         image=item_data.image,
-        category=category
+        category=category,
+        subcategory=subcategory,
+        bottom_category=bottom_category
     )
     
     item_dict = item.model_dump()
@@ -334,10 +545,26 @@ async def create_item(item_data: ItemCreate, user: User = Depends(get_current_us
     
     # Add/update category
     await db.categories.update_one(
-        {"name": category},
-        {"$setOnInsert": {"name": category, "click_count": 0}},
+        {"name": category, "level": 0},
+        {"$setOnInsert": {"name": category, "click_count": 0, "parent_category": None, "level": 0}},
         upsert=True
     )
+    
+    # Add subcategory if provided
+    if subcategory:
+        await db.categories.update_one(
+            {"name": subcategory, "parent_category": category, "level": 1},
+            {"$setOnInsert": {"name": subcategory, "click_count": 0, "parent_category": category, "level": 1}},
+            upsert=True
+        )
+    
+    # Add bottom_category if provided
+    if bottom_category and subcategory:
+        await db.categories.update_one(
+            {"name": bottom_category, "parent_category": subcategory, "level": 2},
+            {"$setOnInsert": {"name": bottom_category, "click_count": 0, "parent_category": subcategory, "level": 2}},
+            upsert=True
+        )
     
     return item_dict
 
@@ -347,8 +574,17 @@ async def delete_item(item_id: str, user: User = Depends(get_current_user)):
     item = await db.items.find_one({"item_id": item_id}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-    if item["user_id"] != user.user_id:
+    if item["user_id"] != user.user_id and not user.is_admin:
         raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Remove from portfolio if present
+    await db.users.update_one(
+        {"user_id": item["user_id"]},
+        {"$pull": {"portfolio": item_id}}
+    )
+    
+    # Delete pins for this item
+    await db.pins.delete_many({"item_id": item_id})
     
     await db.items.delete_one({"item_id": item_id})
     return {"message": "Item deleted"}
@@ -359,13 +595,91 @@ async def get_my_items(user: User = Depends(get_current_user)):
     items = await db.items.find({"user_id": user.user_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return items
 
+# ============== PIN ENDPOINTS ==============
+
+@api_router.post("/items/{item_id}/pin")
+async def pin_item(item_id: str, user: User = Depends(get_current_user)):
+    """Pin an item to boost it"""
+    item = await db.items.find_one({"item_id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    # Check if already pinned by this user
+    existing_pin = await db.pins.find_one({"user_id": user.user_id, "item_id": item_id}, {"_id": 0})
+    if existing_pin:
+        raise HTTPException(status_code=400, detail="Already pinned this item")
+    
+    # Create pin
+    pin = Pin(user_id=user.user_id, item_id=item_id)
+    pin_dict = pin.model_dump()
+    pin_dict["created_at"] = pin_dict["created_at"].isoformat()
+    
+    insert_dict = pin_dict.copy()
+    await db.pins.insert_one(insert_dict)
+    
+    # Update item boost score
+    new_score = await update_item_boost(item_id)
+    
+    return {"message": "Item pinned", "new_boost_score": new_score}
+
+@api_router.delete("/items/{item_id}/pin")
+async def unpin_item(item_id: str, user: User = Depends(get_current_user)):
+    """Unpin an item"""
+    result = await db.pins.delete_one({"user_id": user.user_id, "item_id": item_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pin not found")
+    
+    # Update item boost score
+    new_score = await update_item_boost(item_id)
+    
+    return {"message": "Item unpinned", "new_boost_score": new_score}
+
+@api_router.get("/items/{item_id}/pin-status")
+async def get_pin_status(item_id: str, user: User = Depends(get_current_user)):
+    """Check if current user has pinned this item"""
+    pin = await db.pins.find_one({"user_id": user.user_id, "item_id": item_id}, {"_id": 0})
+    return {"is_pinned": pin is not None}
+
 # ============== CATEGORY ENDPOINTS ==============
 
 @api_router.get("/categories")
-async def get_categories():
+async def get_categories(level: Optional[int] = None, parent: Optional[str] = None):
     """Get all categories sorted by click count (most popular first)"""
-    categories = await db.categories.find({}, {"_id": 0}).sort("click_count", -1).to_list(50)
+    query = {}
+    if level is not None:
+        query["level"] = level
+    if parent:
+        query["parent_category"] = parent
+    
+    categories = await db.categories.find(query, {"_id": 0}).sort("click_count", -1).to_list(50)
     return categories
+
+@api_router.post("/categories/subcategory")
+async def create_subcategory(data: SubcategoryCreate, user: User = Depends(get_current_user)):
+    """Create a subcategory under a parent category"""
+    name = data.name.strip().lower()
+    if " " in name:
+        raise HTTPException(status_code=400, detail="Category name must be a single word")
+    
+    parent = data.parent_category.strip().lower()
+    
+    # Verify parent exists
+    parent_cat = await db.categories.find_one({"name": parent}, {"_id": 0})
+    if not parent_cat:
+        raise HTTPException(status_code=404, detail="Parent category not found")
+    
+    # Determine level
+    new_level = parent_cat.get("level", 0) + 1
+    if new_level > 2:
+        raise HTTPException(status_code=400, detail="Cannot create category deeper than 3 levels")
+    
+    await db.categories.update_one(
+        {"name": name, "parent_category": parent},
+        {"$setOnInsert": {"name": name, "click_count": 0, "parent_category": parent, "level": new_level}},
+        upsert=True
+    )
+    
+    return {"name": name, "parent_category": parent, "level": new_level}
 
 # ============== MESSAGE ENDPOINTS ==============
 
@@ -616,6 +930,189 @@ async def rate_trade(trade_id: str, rating_data: RatingCreate, user: User = Depe
     )
     
     return {"message": "Rating submitted", "rating": rating_data.rating}
+
+# ============== REPORT ENDPOINTS ==============
+
+@api_router.post("/reports")
+async def create_report(report_data: ReportCreate, user: User = Depends(get_current_user)):
+    """Create a report for user, item, or category"""
+    if report_data.report_type not in ["user", "item", "category"]:
+        raise HTTPException(status_code=400, detail="Invalid report type")
+    
+    report = Report(
+        reporter_id=user.user_id,
+        report_type=report_data.report_type,
+        target_id=report_data.target_id,
+        reason=report_data.reason
+    )
+    
+    report_dict = report.model_dump()
+    report_dict["created_at"] = report_dict["created_at"].isoformat()
+    
+    insert_dict = report_dict.copy()
+    await db.reports.insert_one(insert_dict)
+    
+    return {"message": "Report submitted", "report_id": report.report_id}
+
+@api_router.get("/admin/reports")
+async def get_reports(status: Optional[str] = None, admin: User = Depends(get_admin_user)):
+    """Get all reports (admin only)"""
+    query = {}
+    if status:
+        query["status"] = status
+    
+    reports = await db.reports.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    
+    # Enrich with reporter info
+    result = []
+    for report in reports:
+        reporter = await db.users.find_one({"user_id": report["reporter_id"]}, {"_id": 0})
+        result.append({
+            "report": report,
+            "reporter": reporter
+        })
+    
+    return result
+
+@api_router.put("/admin/reports/{report_id}")
+async def update_report(report_id: str, status: str, admin: User = Depends(get_admin_user)):
+    """Update report status (admin only)"""
+    if status not in ["pending", "reviewed", "resolved"]:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    
+    result = await db.reports.update_one(
+        {"report_id": report_id},
+        {"$set": {"status": status}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Report not found")
+    
+    return {"message": "Report updated"}
+
+# ============== ADMIN ENDPOINTS ==============
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: User = Depends(get_admin_user)):
+    """Delete a user (admin only)"""
+    if user_id == admin.user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Delete user's items
+    await db.items.delete_many({"user_id": user_id})
+    # Delete user's messages
+    await db.messages.delete_many({"$or": [{"sender_id": user_id}, {"receiver_id": user_id}]})
+    # Delete user's trades
+    await db.trades.delete_many({"$or": [{"owner_id": user_id}, {"trader_id": user_id}]})
+    # Delete user's pins
+    await db.pins.delete_many({"user_id": user_id})
+    # Delete user's sessions
+    await db.user_sessions.delete_many({"user_id": user_id})
+    # Delete user
+    await db.users.delete_one({"user_id": user_id})
+    
+    return {"message": "User deleted"}
+
+@api_router.delete("/admin/items/{item_id}")
+async def admin_delete_item(item_id: str, admin: User = Depends(get_admin_user)):
+    """Delete any item (admin only)"""
+    item = await db.items.find_one({"item_id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    
+    # Remove from portfolio if present
+    await db.users.update_one(
+        {"user_id": item["user_id"]},
+        {"$pull": {"portfolio": item_id}}
+    )
+    
+    # Delete pins for this item
+    await db.pins.delete_many({"item_id": item_id})
+    
+    await db.items.delete_one({"item_id": item_id})
+    return {"message": "Item deleted"}
+
+@api_router.delete("/admin/categories/{category_name}")
+async def admin_delete_category(category_name: str, admin: User = Depends(get_admin_user)):
+    """Delete a category (admin only)"""
+    result = await db.categories.delete_one({"name": category_name})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    # Also delete child categories
+    await db.categories.delete_many({"parent_category": category_name})
+    
+    return {"message": "Category deleted"}
+
+# ============== ANNOUNCEMENT ENDPOINTS ==============
+
+@api_router.get("/announcements")
+async def get_announcements():
+    """Get active announcements"""
+    announcements = await db.announcements.find({"is_active": True}, {"_id": 0}).sort("created_at", -1).to_list(10)
+    return announcements
+
+@api_router.post("/admin/announcements")
+async def create_announcement(data: AnnouncementCreate, admin: User = Depends(get_admin_user)):
+    """Create an announcement (admin only)"""
+    announcement = Announcement(message=data.message)
+    ann_dict = announcement.model_dump()
+    ann_dict["created_at"] = ann_dict["created_at"].isoformat()
+    
+    insert_dict = ann_dict.copy()
+    await db.announcements.insert_one(insert_dict)
+    
+    return ann_dict
+
+@api_router.put("/admin/announcements/{announcement_id}")
+async def toggle_announcement(announcement_id: str, is_active: bool, admin: User = Depends(get_admin_user)):
+    """Toggle announcement active status (admin only)"""
+    result = await db.announcements.update_one(
+        {"announcement_id": announcement_id},
+        {"$set": {"is_active": is_active}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    
+    return {"message": "Announcement updated"}
+
+@api_router.delete("/admin/announcements/{announcement_id}")
+async def delete_announcement(announcement_id: str, admin: User = Depends(get_admin_user)):
+    """Delete an announcement (admin only)"""
+    result = await db.announcements.delete_one({"announcement_id": announcement_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    
+    return {"message": "Announcement deleted"}
+
+# ============== SETTINGS ENDPOINTS ==============
+
+@api_router.get("/settings")
+async def get_settings():
+    """Get global settings"""
+    settings = await db.settings.find_one({"setting_id": "global_settings"}, {"_id": 0})
+    if not settings:
+        return {"setting_id": "global_settings", "max_portfolio_items": 7}
+    return settings
+
+@api_router.put("/admin/settings")
+async def update_settings(max_portfolio_items: int, admin: User = Depends(get_admin_user)):
+    """Update global settings (admin only)"""
+    if max_portfolio_items < 1 or max_portfolio_items > 50:
+        raise HTTPException(status_code=400, detail="Max portfolio items must be between 1 and 50")
+    
+    await db.settings.update_one(
+        {"setting_id": "global_settings"},
+        {"$set": {"max_portfolio_items": max_portfolio_items}},
+        upsert=True
+    )
+    
+    return {"message": "Settings updated", "max_portfolio_items": max_portfolio_items}
 
 # ============== FILE UPLOAD ==============
 
