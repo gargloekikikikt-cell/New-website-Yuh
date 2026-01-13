@@ -14,8 +14,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ImagePlus, X, Loader2 } from "lucide-react";
+import { ImagePlus, X, Loader2, Plus, HelpCircle } from "lucide-react";
 
 const PostItem = () => {
   const navigate = useNavigate();
@@ -34,6 +42,15 @@ const PostItem = () => {
     bottom_category: "",
     image: "",
   });
+
+  // Category request modal state
+  const [showRequestModal, setShowRequestModal] = useState(false);
+  const [requestData, setRequestData] = useState({
+    category_name: "",
+    parent_category: "",
+    reason: "",
+  });
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -78,6 +95,8 @@ const PostItem = () => {
     if (formData.category) {
       fetchSubcategories(formData.category);
       setFormData(prev => ({ ...prev, subcategory: "", bottom_category: "" }));
+    } else {
+      setSubcategories([]);
     }
   }, [formData.category, fetchSubcategories]);
 
@@ -85,6 +104,8 @@ const PostItem = () => {
     if (formData.subcategory) {
       fetchBottomCategories(formData.subcategory);
       setFormData(prev => ({ ...prev, bottom_category: "" }));
+    } else {
+      setBottomCategories([]);
     }
   }, [formData.subcategory, fetchBottomCategories]);
 
@@ -92,19 +113,16 @@ const PostItem = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
     if (!file.type.startsWith("image/")) {
       toast.error("Please select an image file");
       return;
     }
 
-    // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       toast.error("Image must be less than 5MB");
       return;
     }
 
-    // Create preview
     const reader = new FileReader();
     reader.onload = (event) => {
       setImagePreview(event.target.result);
@@ -132,20 +150,8 @@ const PostItem = () => {
       toast.error("Please add an image");
       return;
     }
-    if (!formData.category.trim()) {
-      toast.error("Please enter a category");
-      return;
-    }
-    if (formData.category.includes(" ")) {
-      toast.error("Category must be a single word");
-      return;
-    }
-    if (formData.subcategory && formData.subcategory.includes(" ")) {
-      toast.error("Subcategory must be a single word");
-      return;
-    }
-    if (formData.bottom_category && formData.bottom_category.includes(" ")) {
-      toast.error("Bottom category must be a single word");
+    if (!formData.category) {
+      toast.error("Please select a category");
       return;
     }
 
@@ -156,9 +162,9 @@ const PostItem = () => {
         {
           title: formData.title.trim(),
           description: formData.description.trim() || null,
-          category: formData.category.trim().toLowerCase(),
-          subcategory: formData.subcategory?.trim().toLowerCase() || null,
-          bottom_category: formData.bottom_category?.trim().toLowerCase() || null,
+          category: formData.category,
+          subcategory: formData.subcategory || null,
+          bottom_category: formData.bottom_category || null,
           image: formData.image,
         },
         { withCredentials: true }
@@ -169,6 +175,41 @@ const PostItem = () => {
       toast.error(error.response?.data?.detail || "Failed to post item");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRequestCategory = async () => {
+    if (!requestData.category_name.trim()) {
+      toast.error("Please enter a category name");
+      return;
+    }
+    if (requestData.category_name.includes(" ")) {
+      toast.error("Category name must be a single word");
+      return;
+    }
+    if (!requestData.reason.trim()) {
+      toast.error("Please explain why this category should be added");
+      return;
+    }
+
+    setIsSubmittingRequest(true);
+    try {
+      await axios.post(
+        `${API}/category-requests`,
+        {
+          category_name: requestData.category_name.trim().toLowerCase(),
+          parent_category: requestData.parent_category || null,
+          reason: requestData.reason.trim(),
+        },
+        { withCredentials: true }
+      );
+      toast.success("Category request submitted! An admin will review it.");
+      setShowRequestModal(false);
+      setRequestData({ category_name: "", parent_category: "", reason: "" });
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to submit request");
+    } finally {
+      setIsSubmittingRequest(false);
     }
   };
 
@@ -268,103 +309,82 @@ const PostItem = () => {
 
           {/* Category */}
           <div className="space-y-2">
-            <Label htmlFor="category">Category *</Label>
-            <div className="flex gap-2">
-              <Select
-                value={formData.category}
-                onValueChange={(value) => setFormData((prev) => ({ ...prev, category: value }))}
+            <div className="flex items-center justify-between">
+              <Label>Category *</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowRequestModal(true)}
+                className="text-indigo-600 hover:text-indigo-700"
+                data-testid="request-category-btn"
               >
-                <SelectTrigger className="bg-slate-50" data-testid="category-select">
-                  <SelectValue placeholder="Select or type category" />
+                <Plus className="w-4 h-4 mr-1" />
+                Request New Category
+              </Button>
+            </div>
+            <Select
+              value={formData.category}
+              onValueChange={(value) => setFormData((prev) => ({ ...prev, category: value }))}
+            >
+              <SelectTrigger className="bg-slate-50" data-testid="category-select">
+                <SelectValue placeholder="Select a category" />
+              </SelectTrigger>
+              <SelectContent>
+                {categories.length === 0 ? (
+                  <div className="p-2 text-sm text-slate-500">No categories available</div>
+                ) : (
+                  categories.map((cat) => (
+                    <SelectItem key={cat.name} value={cat.name} className="capitalize">
+                      {cat.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Subcategory */}
+          {formData.category && subcategories.length > 0 && (
+            <div className="space-y-2">
+              <Label>Subcategory (optional)</Label>
+              <Select
+                value={formData.subcategory}
+                onValueChange={(value) => setFormData((prev) => ({ ...prev, subcategory: value }))}
+              >
+                <SelectTrigger className="bg-slate-50" data-testid="subcategory-select">
+                  <SelectValue placeholder="Select a subcategory" />
                 </SelectTrigger>
                 <SelectContent>
-                  {categories.map((cat) => (
+                  {subcategories.map((cat) => (
                     <SelectItem key={cat.name} value={cat.name} className="capitalize">
                       {cat.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <Input
-                value={formData.category}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, category: e.target.value.replace(/\s/g, '') }))
-                }
-                placeholder="Or type new"
-                className="bg-slate-50 flex-1"
-                data-testid="category-input"
-              />
             </div>
-            <p className="text-xs text-slate-500">
-              Single word only (e.g., "electronics" not "electronic items")
-            </p>
-          </div>
-
-          {/* Subcategory */}
-          <div className="space-y-2">
-            <Label htmlFor="subcategory">Subcategory (optional)</Label>
-            <div className="flex gap-2">
-              {subcategories.length > 0 && (
-                <Select
-                  value={formData.subcategory}
-                  onValueChange={(value) => setFormData((prev) => ({ ...prev, subcategory: value }))}
-                >
-                  <SelectTrigger className="bg-slate-50" data-testid="subcategory-select">
-                    <SelectValue placeholder="Select subcategory" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {subcategories.map((cat) => (
-                      <SelectItem key={cat.name} value={cat.name} className="capitalize">
-                        {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              <Input
-                value={formData.subcategory}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, subcategory: e.target.value.replace(/\s/g, '') }))
-                }
-                placeholder="Type subcategory"
-                className="bg-slate-50 flex-1"
-                data-testid="subcategory-input"
-              />
-            </div>
-          </div>
+          )}
 
           {/* Bottom Category */}
-          {formData.subcategory && (
+          {formData.subcategory && bottomCategories.length > 0 && (
             <div className="space-y-2">
-              <Label htmlFor="bottom_category">Bottom Category (optional)</Label>
-              <div className="flex gap-2">
-                {bottomCategories.length > 0 && (
-                  <Select
-                    value={formData.bottom_category}
-                    onValueChange={(value) => setFormData((prev) => ({ ...prev, bottom_category: value }))}
-                  >
-                    <SelectTrigger className="bg-slate-50" data-testid="bottom-category-select">
-                      <SelectValue placeholder="Select bottom category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {bottomCategories.map((cat) => (
-                        <SelectItem key={cat.name} value={cat.name} className="capitalize">
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                <Input
-                  value={formData.bottom_category}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, bottom_category: e.target.value.replace(/\s/g, '') }))
-                  }
-                  placeholder="Type bottom category"
-                  className="bg-slate-50 flex-1"
-                  data-testid="bottom-category-input"
-                />
-              </div>
+              <Label>Specific Type (optional)</Label>
+              <Select
+                value={formData.bottom_category}
+                onValueChange={(value) => setFormData((prev) => ({ ...prev, bottom_category: value }))}
+              >
+                <SelectTrigger className="bg-slate-50" data-testid="bottom-category-select">
+                  <SelectValue placeholder="Select specific type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {bottomCategories.map((cat) => (
+                    <SelectItem key={cat.name} value={cat.name} className="capitalize">
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
 
@@ -396,6 +416,80 @@ const PostItem = () => {
           </div>
         </form>
       </main>
+
+      {/* Request Category Modal */}
+      <Dialog open={showRequestModal} onOpenChange={setShowRequestModal}>
+        <DialogContent className="sm:max-w-md" data-testid="request-category-modal">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "Manrope, sans-serif" }}>
+              Request New Category
+            </DialogTitle>
+            <DialogDescription>
+              Submit a request for a new category. An admin will review it.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Category Name *</Label>
+              <Input
+                value={requestData.category_name}
+                onChange={(e) => setRequestData((prev) => ({ ...prev, category_name: e.target.value.replace(/\s/g, '') }))}
+                placeholder="Single word (e.g., vehicles)"
+                className="bg-slate-50"
+                data-testid="request-category-name"
+              />
+              <p className="text-xs text-slate-500">Must be a single word, no spaces</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Parent Category (optional)</Label>
+              <Select
+                value={requestData.parent_category}
+                onValueChange={(value) => setRequestData((prev) => ({ ...prev, parent_category: value }))}
+              >
+                <SelectTrigger className="bg-slate-50">
+                  <SelectValue placeholder="None (main category)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None (main category)</SelectItem>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.name} value={cat.name} className="capitalize">
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">Leave empty to request a main category</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Why should this category be added? *</Label>
+              <Textarea
+                value={requestData.reason}
+                onChange={(e) => setRequestData((prev) => ({ ...prev, reason: e.target.value }))}
+                placeholder="Explain why this category would be useful..."
+                className="bg-slate-50 min-h-[100px]"
+                data-testid="request-category-reason"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRequestModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRequestCategory}
+              disabled={isSubmittingRequest}
+              className="bg-indigo-600 hover:bg-indigo-700"
+              data-testid="submit-category-request-btn"
+            >
+              {isSubmittingRequest ? "Submitting..." : "Submit Request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
