@@ -445,8 +445,8 @@ const PostItem = () => {
             <div className="space-y-2">
               <Label>Parent Category (optional)</Label>
               <Select
-                value={requestData.parent_category}
-                onValueChange={(value) => setRequestData((prev) => ({ ...prev, parent_category: value }))}
+                value={requestData.parent_category || "none"}
+                onValueChange={(value) => setRequestData((prev) => ({ ...prev, parent_category: value === "none" ? "" : value }))}
               >
                 <SelectTrigger className="bg-slate-50">
                   <SelectValue placeholder="None (main category)" />

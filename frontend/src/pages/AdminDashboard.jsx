@@ -548,7 +548,7 @@ const AdminDashboard = () => {
                   className="bg-slate-50 flex-1"
                   data-testid="new-category-input"
                 />
-                <Select value={newCategoryParent} onValueChange={setNewCategoryParent}>
+                <Select value={newCategoryParent || "none"} onValueChange={(v) => setNewCategoryParent(v === "none" ? "" : v)}>
                   <SelectTrigger className="bg-slate-50 w-full sm:w-48">
                     <SelectValue placeholder="Parent (optional)" />
                   </SelectTrigger>
