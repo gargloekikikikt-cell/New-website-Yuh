@@ -563,24 +563,27 @@ async def get_item(item_id: str):
 @api_router.post("/items")
 async def create_item(item_data: ItemCreate, user: User = Depends(get_current_user)):
     """Create a new item for trade"""
-    # Validate category is single word
+    # Validate category exists
     category = item_data.category.strip().lower()
-    if " " in category:
-        raise HTTPException(status_code=400, detail="Category must be a single word")
+    existing_cat = await db.categories.find_one({"name": category, "level": 0}, {"_id": 0})
+    if not existing_cat:
+        raise HTTPException(status_code=400, detail="Category does not exist. Please select from available categories or request a new one.")
     
     # Validate subcategory if provided
     subcategory = None
     if item_data.subcategory:
         subcategory = item_data.subcategory.strip().lower()
-        if " " in subcategory:
-            raise HTTPException(status_code=400, detail="Subcategory must be a single word")
+        existing_sub = await db.categories.find_one({"name": subcategory, "parent_category": category, "level": 1}, {"_id": 0})
+        if not existing_sub:
+            raise HTTPException(status_code=400, detail="Subcategory does not exist under this category.")
     
     # Validate bottom_category if provided
     bottom_category = None
-    if item_data.bottom_category:
+    if item_data.bottom_category and subcategory:
         bottom_category = item_data.bottom_category.strip().lower()
-        if " " in bottom_category:
-            raise HTTPException(status_code=400, detail="Bottom category must be a single word")
+        existing_bottom = await db.categories.find_one({"name": bottom_category, "parent_category": subcategory, "level": 2}, {"_id": 0})
+        if not existing_bottom:
+            raise HTTPException(status_code=400, detail="Bottom category does not exist under this subcategory.")
     
     item = Item(
         user_id=user.user_id,
@@ -599,28 +602,8 @@ async def create_item(item_data: ItemCreate, user: User = Depends(get_current_us
     insert_dict = item_dict.copy()
     await db.items.insert_one(insert_dict)
     
-    # Add/update category
-    await db.categories.update_one(
-        {"name": category, "level": 0},
-        {"$setOnInsert": {"name": category, "click_count": 0, "parent_category": None, "level": 0}},
-        upsert=True
-    )
-    
-    # Add subcategory if provided
-    if subcategory:
-        await db.categories.update_one(
-            {"name": subcategory, "parent_category": category, "level": 1},
-            {"$setOnInsert": {"name": subcategory, "click_count": 0, "parent_category": category, "level": 1}},
-            upsert=True
-        )
-    
-    # Add bottom_category if provided
-    if bottom_category and subcategory:
-        await db.categories.update_one(
-            {"name": bottom_category, "parent_category": subcategory, "level": 2},
-            {"$setOnInsert": {"name": bottom_category, "click_count": 0, "parent_category": subcategory, "level": 2}},
-            upsert=True
-        )
+    # Increment category click count
+    await db.categories.update_one({"name": category}, {"$inc": {"click_count": 1}})
     
     return item_dict
 
