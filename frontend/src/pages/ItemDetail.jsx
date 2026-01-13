@@ -4,6 +4,7 @@ import axios from "axios";
 import { useAuth } from "@/App";
 import { Header } from "@/components/Header";
 import { DisplayRating } from "@/components/StarRating";
+import { ReportModal } from "@/components/ReportModal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowLeftRight, MessageCircle, Loader2, ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeftRight, MessageCircle, Loader2, ArrowLeft, Trash2, Pin, Flag, TrendingUp } from "lucide-react";
 
 const ItemDetail = () => {
   const { itemId } = useParams();
@@ -32,6 +33,9 @@ const ItemDetail = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isTradeOpen, setIsTradeOpen] = useState(false);
   const [isCreatingTrade, setIsCreatingTrade] = useState(false);
+  const [isPinned, setIsPinned] = useState(false);
+  const [isPinning, setIsPinning] = useState(false);
+  const [isReportOpen, setIsReportOpen] = useState(false);
 
   const isOwner = user?.user_id === item?.user_id;
 
@@ -40,6 +44,14 @@ const ItemDetail = () => {
       const response = await axios.get(`${API}/items/${itemId}`, { withCredentials: true });
       setItem(response.data.item);
       setOwner(response.data.owner);
+
+      // Check pin status
+      try {
+        const pinRes = await axios.get(`${API}/items/${itemId}/pin-status`, { withCredentials: true });
+        setIsPinned(pinRes.data.is_pinned);
+      } catch {
+        // Ignore pin status errors
+      }
     } catch (error) {
       console.error("Failed to fetch item:", error);
       toast.error("Item not found");
@@ -114,6 +126,26 @@ const ItemDetail = () => {
     }
   };
 
+  const handlePin = async () => {
+    setIsPinning(true);
+    try {
+      if (isPinned) {
+        await axios.delete(`${API}/items/${itemId}/pin`, { withCredentials: true });
+        toast.success("Item unpinned");
+        setIsPinned(false);
+      } else {
+        const response = await axios.post(`${API}/items/${itemId}/pin`, {}, { withCredentials: true });
+        toast.success(`Item pinned! New boost: ${response.data.new_boost_score}`);
+        setIsPinned(true);
+      }
+      fetchItem(); // Refresh to get updated boost score
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to update pin");
+    } finally {
+      setIsPinning(false);
+    }
+  };
+
   const getInitials = (name) => {
     if (!name) return "U";
     return name
@@ -164,7 +196,7 @@ const ItemDetail = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Image */}
-          <div className="rounded-2xl overflow-hidden bg-slate-100">
+          <div className="rounded-2xl overflow-hidden bg-slate-100 relative">
             <img
               src={item.image}
               alt={item.title}
@@ -172,14 +204,33 @@ const ItemDetail = () => {
               style={{ minHeight: "400px" }}
               data-testid="item-image"
             />
+            {/* Boost Badge */}
+            {item.boost_score > 0 && (
+              <Badge className="absolute top-4 right-4 bg-amber-500">
+                <TrendingUp className="w-3 h-3 mr-1" />
+                {item.boost_score.toFixed(1)} boost • {item.pin_count} pins
+              </Badge>
+            )}
           </div>
 
           {/* Details */}
           <div className="space-y-6">
             <div>
-              <Badge className="mb-3 capitalize bg-slate-100 text-slate-600 border-0">
-                {item.category}
-              </Badge>
+              <div className="flex items-center gap-2 mb-3">
+                <Badge className="capitalize bg-slate-100 text-slate-600 border-0">
+                  {item.category}
+                </Badge>
+                {item.subcategory && (
+                  <Badge variant="outline" className="capitalize">
+                    {item.subcategory}
+                  </Badge>
+                )}
+                {item.bottom_category && (
+                  <Badge variant="outline" className="capitalize">
+                    {item.bottom_category}
+                  </Badge>
+                )}
+              </div>
               <h1
                 className="text-3xl font-bold text-slate-900 mb-3"
                 style={{ fontFamily: "Manrope, sans-serif" }}
@@ -226,24 +277,47 @@ const ItemDetail = () => {
 
             {/* Actions */}
             {!isOwner && item.is_available && (
-              <div className="flex gap-3">
-                <Button
-                  onClick={() => setIsTradeOpen(true)}
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full py-6 shadow-lg hover:shadow-indigo-500/30 transition-all"
-                  data-testid="trade-btn"
-                >
-                  <ArrowLeftRight className="w-5 h-5 mr-2" />
-                  Start Trade
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setIsMessageOpen(true)}
-                  className="rounded-full py-6"
-                  data-testid="message-btn"
-                >
-                  <MessageCircle className="w-5 h-5 mr-2" />
-                  Message
-                </Button>
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <Button
+                    onClick={() => setIsTradeOpen(true)}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full py-6 shadow-lg hover:shadow-indigo-500/30 transition-all"
+                    data-testid="trade-btn"
+                  >
+                    <ArrowLeftRight className="w-5 h-5 mr-2" />
+                    Start Trade
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsMessageOpen(true)}
+                    className="rounded-full py-6"
+                    data-testid="message-btn"
+                  >
+                    <MessageCircle className="w-5 h-5 mr-2" />
+                    Message
+                  </Button>
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant={isPinned ? "secondary" : "outline"}
+                    onClick={handlePin}
+                    disabled={isPinning}
+                    className="flex-1 rounded-full"
+                    data-testid="pin-btn"
+                  >
+                    <Pin className={`w-4 h-4 mr-2 ${isPinned ? "fill-current" : ""}`} />
+                    {isPinning ? "..." : isPinned ? "Pinned" : "Pin to Boost"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setIsReportOpen(true)}
+                    className="text-slate-500 hover:text-red-600"
+                    data-testid="report-item-btn"
+                  >
+                    <Flag className="w-4 h-4 mr-2" />
+                    Report
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -339,6 +413,15 @@ const ItemDetail = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Report Modal */}
+      <ReportModal
+        isOpen={isReportOpen}
+        onClose={() => setIsReportOpen(false)}
+        targetType="item"
+        targetId={itemId}
+        targetName={item?.title}
+      />
     </div>
   );
 };

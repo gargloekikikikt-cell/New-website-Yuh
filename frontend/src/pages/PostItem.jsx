@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "@/App";
@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { ImagePlus, X, Loader2 } from "lucide-react";
 
@@ -16,12 +23,70 @@ const PostItem = () => {
   const fileInputRef = useRef(null);
   const [isLoading, setIsLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [subcategories, setSubcategories] = useState([]);
+  const [bottomCategories, setBottomCategories] = useState([]);
   const [formData, setFormData] = useState({
     title: "",
     description: "",
     category: "",
+    subcategory: "",
+    bottom_category: "",
     image: "",
   });
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API}/categories?level=0`, { withCredentials: true });
+      setCategories(response.data);
+    } catch (error) {
+      console.error("Failed to fetch categories:", error);
+    }
+  }, [API]);
+
+  const fetchSubcategories = useCallback(async (parent) => {
+    if (!parent) {
+      setSubcategories([]);
+      return;
+    }
+    try {
+      const response = await axios.get(`${API}/categories?level=1&parent=${parent}`, { withCredentials: true });
+      setSubcategories(response.data);
+    } catch (error) {
+      console.error("Failed to fetch subcategories:", error);
+    }
+  }, [API]);
+
+  const fetchBottomCategories = useCallback(async (parent) => {
+    if (!parent) {
+      setBottomCategories([]);
+      return;
+    }
+    try {
+      const response = await axios.get(`${API}/categories?level=2&parent=${parent}`, { withCredentials: true });
+      setBottomCategories(response.data);
+    } catch (error) {
+      console.error("Failed to fetch bottom categories:", error);
+    }
+  }, [API]);
+
+  useEffect(() => {
+    fetchCategories();
+  }, [fetchCategories]);
+
+  useEffect(() => {
+    if (formData.category) {
+      fetchSubcategories(formData.category);
+      setFormData(prev => ({ ...prev, subcategory: "", bottom_category: "" }));
+    }
+  }, [formData.category, fetchSubcategories]);
+
+  useEffect(() => {
+    if (formData.subcategory) {
+      fetchBottomCategories(formData.subcategory);
+      setFormData(prev => ({ ...prev, bottom_category: "" }));
+    }
+  }, [formData.subcategory, fetchBottomCategories]);
 
   const handleImageChange = async (e) => {
     const file = e.target.files?.[0];
@@ -75,6 +140,14 @@ const PostItem = () => {
       toast.error("Category must be a single word");
       return;
     }
+    if (formData.subcategory && formData.subcategory.includes(" ")) {
+      toast.error("Subcategory must be a single word");
+      return;
+    }
+    if (formData.bottom_category && formData.bottom_category.includes(" ")) {
+      toast.error("Bottom category must be a single word");
+      return;
+    }
 
     setIsLoading(true);
     try {
@@ -84,6 +157,8 @@ const PostItem = () => {
           title: formData.title.trim(),
           description: formData.description.trim() || null,
           category: formData.category.trim().toLowerCase(),
+          subcategory: formData.subcategory?.trim().toLowerCase() || null,
+          bottom_category: formData.bottom_category?.trim().toLowerCase() || null,
           image: formData.image,
         },
         { withCredentials: true }
@@ -194,20 +269,104 @@ const PostItem = () => {
           {/* Category */}
           <div className="space-y-2">
             <Label htmlFor="category">Category *</Label>
-            <Input
-              id="category"
-              value={formData.category}
-              onChange={(e) =>
-                setFormData((prev) => ({ ...prev, category: e.target.value }))
-              }
-              placeholder="e.g., electronics, clothing, books"
-              className="bg-slate-50"
-              data-testid="category-input"
-            />
+            <div className="flex gap-2">
+              <Select
+                value={formData.category}
+                onValueChange={(value) => setFormData((prev) => ({ ...prev, category: value }))}
+              >
+                <SelectTrigger className="bg-slate-50" data-testid="category-select">
+                  <SelectValue placeholder="Select or type category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.name} value={cat.name} className="capitalize">
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                value={formData.category}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, category: e.target.value.replace(/\s/g, '') }))
+                }
+                placeholder="Or type new"
+                className="bg-slate-50 flex-1"
+                data-testid="category-input"
+              />
+            </div>
             <p className="text-xs text-slate-500">
               Single word only (e.g., "electronics" not "electronic items")
             </p>
           </div>
+
+          {/* Subcategory */}
+          <div className="space-y-2">
+            <Label htmlFor="subcategory">Subcategory (optional)</Label>
+            <div className="flex gap-2">
+              {subcategories.length > 0 && (
+                <Select
+                  value={formData.subcategory}
+                  onValueChange={(value) => setFormData((prev) => ({ ...prev, subcategory: value }))}
+                >
+                  <SelectTrigger className="bg-slate-50" data-testid="subcategory-select">
+                    <SelectValue placeholder="Select subcategory" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {subcategories.map((cat) => (
+                      <SelectItem key={cat.name} value={cat.name} className="capitalize">
+                        {cat.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <Input
+                value={formData.subcategory}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, subcategory: e.target.value.replace(/\s/g, '') }))
+                }
+                placeholder="Type subcategory"
+                className="bg-slate-50 flex-1"
+                data-testid="subcategory-input"
+              />
+            </div>
+          </div>
+
+          {/* Bottom Category */}
+          {formData.subcategory && (
+            <div className="space-y-2">
+              <Label htmlFor="bottom_category">Bottom Category (optional)</Label>
+              <div className="flex gap-2">
+                {bottomCategories.length > 0 && (
+                  <Select
+                    value={formData.bottom_category}
+                    onValueChange={(value) => setFormData((prev) => ({ ...prev, bottom_category: value }))}
+                  >
+                    <SelectTrigger className="bg-slate-50" data-testid="bottom-category-select">
+                      <SelectValue placeholder="Select bottom category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bottomCategories.map((cat) => (
+                        <SelectItem key={cat.name} value={cat.name} className="capitalize">
+                          {cat.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Input
+                  value={formData.bottom_category}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, bottom_category: e.target.value.replace(/\s/g, '') }))
+                  }
+                  placeholder="Type bottom category"
+                  className="bg-slate-50 flex-1"
+                  data-testid="bottom-category-input"
+                />
+              </div>
+            </div>
+          )}
 
           {/* Submit */}
           <div className="flex gap-4 pt-4">
