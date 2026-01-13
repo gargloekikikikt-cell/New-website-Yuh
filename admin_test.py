@@ -9,8 +9,8 @@ class AdminAPITester:
     def __init__(self, base_url="https://tradehub-310.preview.emergentagent.com/api"):
         self.base_url = base_url
         # Admin token - using the admin email from the requirements
-        self.admin_token = "admin_session_1768106897885"  # Admin user
-        self.admin_user_id = "admin-user-1768106897885"
+        self.admin_token = "admin_session_1768286105"  # Admin user
+        self.admin_user_id = "user_bfc8c1303522"
         self.tests_run = 0
         self.tests_passed = 0
         self.created_category_id = None
