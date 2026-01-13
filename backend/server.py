@@ -710,32 +710,197 @@ async def get_categories(level: Optional[int] = None, parent: Optional[str] = No
     categories = await db.categories.find(query, {"_id": 0}).sort("click_count", -1).to_list(50)
     return categories
 
-@api_router.post("/categories/subcategory")
-async def create_subcategory(data: SubcategoryCreate, user: User = Depends(get_current_user)):
-    """Create a subcategory under a parent category"""
+# ============== CATEGORY REQUEST ENDPOINTS ==============
+
+@api_router.post("/category-requests")
+async def create_category_request(data: CategoryRequestCreate, user: User = Depends(get_current_user)):
+    """Submit a request for a new category"""
+    name = data.category_name.strip().lower()
+    if " " in name:
+        raise HTTPException(status_code=400, detail="Category name must be a single word")
+    
+    # Check if category already exists
+    existing = await db.categories.find_one({"name": name}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Category already exists")
+    
+    # Check if request already pending
+    pending = await db.category_requests.find_one({
+        "category_name": name,
+        "status": "pending"
+    }, {"_id": 0})
+    if pending:
+        raise HTTPException(status_code=400, detail="A request for this category is already pending")
+    
+    request = CategoryRequest(
+        user_id=user.user_id,
+        category_name=name,
+        parent_category=data.parent_category.strip().lower() if data.parent_category else None,
+        reason=data.reason
+    )
+    
+    request_dict = request.model_dump()
+    request_dict["created_at"] = request_dict["created_at"].isoformat()
+    
+    insert_dict = request_dict.copy()
+    await db.category_requests.insert_one(insert_dict)
+    
+    return {"message": "Category request submitted", "request_id": request.request_id}
+
+@api_router.get("/category-requests/mine")
+async def get_my_category_requests(user: User = Depends(get_current_user)):
+    """Get current user's category requests"""
+    requests = await db.category_requests.find(
+        {"user_id": user.user_id},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return requests
+
+@api_router.get("/admin/category-requests")
+async def admin_get_category_requests(status: Optional[str] = None, admin: User = Depends(get_admin_user)):
+    """Get all category requests (admin only)"""
+    query = {}
+    if status:
+        query["status"] = status
+    
+    requests = await db.category_requests.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    
+    # Enrich with user info
+    result = []
+    for req in requests:
+        user = await db.users.find_one({"user_id": req["user_id"]}, {"_id": 0, "user_id": 1, "name": 1, "username": 1})
+        result.append({"request": req, "user": user})
+    
+    return result
+
+@api_router.post("/admin/category-requests/{request_id}/approve")
+async def admin_approve_category_request(request_id: str, admin: User = Depends(get_admin_user)):
+    """Approve a category request and create the category (admin only)"""
+    req = await db.category_requests.find_one({"request_id": request_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    
+    if req["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Request already processed")
+    
+    # Determine level
+    level = 0
+    parent = req.get("parent_category")
+    if parent:
+        parent_cat = await db.categories.find_one({"name": parent}, {"_id": 0})
+        if parent_cat:
+            level = parent_cat.get("level", 0) + 1
+    
+    # Create the category
+    await db.categories.update_one(
+        {"name": req["category_name"]},
+        {"$setOnInsert": {
+            "name": req["category_name"],
+            "click_count": 0,
+            "parent_category": parent,
+            "level": level
+        }},
+        upsert=True
+    )
+    
+    # Update request status
+    await db.category_requests.update_one(
+        {"request_id": request_id},
+        {"$set": {"status": "approved"}}
+    )
+    
+    return {"message": "Category request approved and category created"}
+
+@api_router.post("/admin/category-requests/{request_id}/reject")
+async def admin_reject_category_request(request_id: str, admin: User = Depends(get_admin_user)):
+    """Reject a category request (admin only)"""
+    result = await db.category_requests.update_one(
+        {"request_id": request_id, "status": "pending"},
+        {"$set": {"status": "rejected"}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Request not found or already processed")
+    
+    return {"message": "Category request rejected"}
+
+@api_router.post("/admin/categories")
+async def admin_create_category(data: AdminCreateCategory, admin: User = Depends(get_admin_user)):
+    """Create a new category (admin only)"""
     name = data.name.strip().lower()
     if " " in name:
         raise HTTPException(status_code=400, detail="Category name must be a single word")
     
-    parent = data.parent_category.strip().lower()
-    
-    # Verify parent exists
-    parent_cat = await db.categories.find_one({"name": parent}, {"_id": 0})
-    if not parent_cat:
-        raise HTTPException(status_code=404, detail="Parent category not found")
+    # Check if exists
+    existing = await db.categories.find_one({"name": name}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Category already exists")
     
     # Determine level
-    new_level = parent_cat.get("level", 0) + 1
-    if new_level > 2:
-        raise HTTPException(status_code=400, detail="Cannot create category deeper than 3 levels")
+    level = 0
+    parent = None
+    if data.parent_category:
+        parent = data.parent_category.strip().lower()
+        parent_cat = await db.categories.find_one({"name": parent}, {"_id": 0})
+        if not parent_cat:
+            raise HTTPException(status_code=404, detail="Parent category not found")
+        level = parent_cat.get("level", 0) + 1
+        if level > 2:
+            raise HTTPException(status_code=400, detail="Cannot create category deeper than 3 levels")
     
-    await db.categories.update_one(
-        {"name": name, "parent_category": parent},
-        {"$setOnInsert": {"name": name, "click_count": 0, "parent_category": parent, "level": new_level}},
-        upsert=True
-    )
+    await db.categories.insert_one({
+        "name": name,
+        "click_count": 0,
+        "parent_category": parent,
+        "level": level
+    })
     
-    return {"name": name, "parent_category": parent, "level": new_level}
+    return {"name": name, "parent_category": parent, "level": level}
+
+# ============== GLOBAL SEARCH ENDPOINT ==============
+
+@api_router.get("/search")
+async def global_search(q: str, type: Optional[str] = None, user: User = Depends(get_current_user)):
+    """Search across users, items, and categories"""
+    results = {
+        "users": [],
+        "items": [],
+        "categories": []
+    }
+    
+    if not q or len(q) < 2:
+        return results
+    
+    # Search users
+    if type is None or type == "users":
+        users = await db.users.find({
+            "$or": [
+                {"name": {"$regex": q, "$options": "i"}},
+                {"username": {"$regex": q, "$options": "i"}}
+            ]
+        }, {"_id": 0, "email": 0}).limit(10).to_list(10)
+        results["users"] = users
+    
+    # Search items
+    if type is None or type == "items":
+        items = await db.items.find({
+            "is_available": True,
+            "$or": [
+                {"title": {"$regex": q, "$options": "i"}},
+                {"description": {"$regex": q, "$options": "i"}},
+                {"category": {"$regex": q, "$options": "i"}}
+            ]
+        }, {"_id": 0}).limit(20).to_list(20)
+        results["items"] = items
+    
+    # Search categories
+    if type is None or type == "categories":
+        categories = await db.categories.find({
+            "name": {"$regex": q, "$options": "i"}
+        }, {"_id": 0}).limit(10).to_list(10)
+        results["categories"] = categories
+    
+    return results
 
 # ============== MESSAGE ENDPOINTS ==============
 
