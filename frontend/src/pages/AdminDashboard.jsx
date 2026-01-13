@@ -533,7 +533,7 @@ const AdminDashboard = () => {
               <Settings className="w-4 h-4 mr-2" />
               Settings
             </TabsTrigger>
-          </Tabs>
+          </TabsList>
 
           {/* Categories Tab */}
           <TabsContent value="categories" className="space-y-6">
