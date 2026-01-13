@@ -3,6 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Toaster } from "@/components/ui/sonner";
+import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 
 // Pages
 import Landing from "@/pages/Landing";
@@ -13,6 +14,7 @@ import Messages from "@/pages/Messages";
 import PostItem from "@/pages/PostItem";
 import MyItems from "@/pages/MyItems";
 import Trades from "@/pages/Trades";
+import AdminDashboard from "@/pages/AdminDashboard";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -127,80 +129,95 @@ const ProtectedRoute = ({ children }) => {
 // App Router with session_id detection
 function AppRouter() {
   const location = useLocation();
+  const { user } = useAuth();
 
   // Synchronously check for session_id in URL fragment - prevents race conditions
   if (location.hash?.includes("session_id=")) {
     return <AuthCallback />;
   }
 
+  // Show announcement banner on protected routes
+  const showBanner = user && !["/"].includes(location.pathname);
+
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/profile/:userId"
-        element={
-          <ProtectedRoute>
-            <Profile />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/item/:itemId"
-        element={
-          <ProtectedRoute>
-            <ItemDetail />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/messages"
-        element={
-          <ProtectedRoute>
-            <Messages />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/messages/:partnerId"
-        element={
-          <ProtectedRoute>
-            <Messages />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/post"
-        element={
-          <ProtectedRoute>
-            <PostItem />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/my-items"
-        element={
-          <ProtectedRoute>
-            <MyItems />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/trades"
-        element={
-          <ProtectedRoute>
-            <Trades />
-          </ProtectedRoute>
-        }
-      />
-    </Routes>
+    <>
+      {showBanner && <AnnouncementBanner />}
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/profile/:userId"
+          element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/item/:itemId"
+          element={
+            <ProtectedRoute>
+              <ItemDetail />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/messages"
+          element={
+            <ProtectedRoute>
+              <Messages />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/messages/:partnerId"
+          element={
+            <ProtectedRoute>
+              <Messages />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/post"
+          element={
+            <ProtectedRoute>
+              <PostItem />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/my-items"
+          element={
+            <ProtectedRoute>
+              <MyItems />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/trades"
+          element={
+            <ProtectedRoute>
+              <Trades />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </>
   );
 }
 
@@ -219,8 +236,17 @@ function AuthProvider({ children }) {
     }
   };
 
+  const refreshUser = async () => {
+    try {
+      const response = await axios.get(`${API}/auth/me`, { withCredentials: true });
+      setUser(response.data);
+    } catch (error) {
+      console.error("Failed to refresh user:", error);
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, setUser, isLoading, setIsLoading, logout, API }}>
+    <AuthContext.Provider value={{ user, setUser, isLoading, setIsLoading, logout, refreshUser, API }}>
       {children}
     </AuthContext.Provider>
   );

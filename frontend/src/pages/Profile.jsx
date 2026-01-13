@@ -1,14 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "@/App";
 import { Header } from "@/components/Header";
 import { ItemCard } from "@/components/ItemCard";
 import { DisplayRating } from "@/components/StarRating";
+import { ReportModal } from "@/components/ReportModal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -17,29 +20,49 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { ArrowLeftRight, Edit2, Loader2 } from "lucide-react";
+import { ArrowLeftRight, Edit2, Loader2, Flag, Trash2, Briefcase, Package, TrendingUp } from "lucide-react";
 
 const Profile = () => {
   const { userId } = useParams();
-  const { user: currentUser, setUser, API } = useAuth();
+  const navigate = useNavigate();
+  const { user: currentUser, setUser, logout, API } = useAuth();
   const [profileUser, setProfileUser] = useState(null);
   const [items, setItems] = useState([]);
+  const [portfolio, setPortfolio] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editUsername, setEditUsername] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [isDeleteAccountOpen, setIsDeleteAccountOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [settings, setSettings] = useState({ max_portfolio_items: 7 });
 
   const isOwnProfile = currentUser?.user_id === userId;
 
   const fetchProfile = useCallback(async () => {
     try {
-      const [userRes, itemsRes] = await Promise.all([
+      const [userRes, itemsRes, portfolioRes, settingsRes] = await Promise.all([
         axios.get(`${API}/users/${userId}`, { withCredentials: true }),
         axios.get(`${API}/items`, { params: { user_id: userId }, withCredentials: true }),
+        axios.get(`${API}/users/${userId}/portfolio`, { withCredentials: true }),
+        axios.get(`${API}/settings`, { withCredentials: true }),
       ]);
       setProfileUser(userRes.data);
       setItems(itemsRes.data);
+      setPortfolio(portfolioRes.data);
+      setSettings(settingsRes.data);
       setEditUsername(userRes.data.username || "");
     } catch (error) {
       console.error("Failed to fetch profile:", error);
@@ -78,6 +101,62 @@ const Profile = () => {
       toast.error(error.response?.data?.detail || "Failed to update profile");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setIsDeleting(true);
+    try {
+      await axios.delete(`${API}/users/account`, { withCredentials: true });
+      toast.success("Account deleted. Goodbye!");
+      await logout();
+      navigate("/");
+    } catch (error) {
+      toast.error("Failed to delete account");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleAddToPortfolio = async (itemId) => {
+    const currentPortfolio = profileUser.portfolio || [];
+    if (currentPortfolio.length >= settings.max_portfolio_items) {
+      toast.error(`Portfolio can have at most ${settings.max_portfolio_items} items`);
+      return;
+    }
+    if (currentPortfolio.includes(itemId)) {
+      toast.error("Item already in portfolio");
+      return;
+    }
+
+    try {
+      const newPortfolio = [...currentPortfolio, itemId];
+      await axios.put(
+        `${API}/users/portfolio`,
+        { item_ids: newPortfolio },
+        { withCredentials: true }
+      );
+      toast.success("Added to portfolio!");
+      fetchProfile();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to update portfolio");
+    }
+  };
+
+  const handleRemoveFromPortfolio = async (itemId) => {
+    const currentPortfolio = profileUser.portfolio || [];
+    const newPortfolio = currentPortfolio.filter((id) => id !== itemId);
+
+    try {
+      await axios.put(
+        `${API}/users/portfolio`,
+        { item_ids: newPortfolio },
+        { withCredentials: true }
+      );
+      toast.success("Removed from portfolio");
+      fetchProfile();
+    } catch (error) {
+      toast.error("Failed to update portfolio");
     }
   };
 
@@ -150,6 +229,17 @@ const Profile = () => {
                     <Edit2 className="w-4 h-4" />
                   </Button>
                 )}
+                {!isOwnProfile && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsReportOpen(true)}
+                    className="text-slate-500 hover:text-red-600"
+                    data-testid="report-user-btn"
+                  >
+                    <Flag className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
 
               {profileUser.username && (
@@ -175,35 +265,135 @@ const Profile = () => {
                   />
                 </div>
               </div>
+
+              {/* Admin Badge */}
+              {profileUser.is_admin && (
+                <Badge className="mt-4 bg-indigo-600">Admin</Badge>
+              )}
             </div>
+
+            {/* Actions */}
+            {isOwnProfile && (
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setIsDeleteAccountOpen(true)}
+                  className="rounded-full"
+                  data-testid="delete-account-btn"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Account
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* User's Items */}
-        <div>
-          <h2
-            className="text-xl font-semibold text-slate-900 mb-6"
-            style={{ fontFamily: "Manrope, sans-serif" }}
-          >
-            {isOwnProfile ? "My Items" : `${profileUser.username || profileUser.name}'s Items`}
-          </h2>
+        {/* Tabs for Portfolio and Items */}
+        <Tabs defaultValue="portfolio" className="w-full">
+          <TabsList className="mb-6">
+            <TabsTrigger value="portfolio" data-testid="portfolio-tab">
+              <Briefcase className="w-4 h-4 mr-2" />
+              Portfolio ({portfolio.length}/{settings.max_portfolio_items})
+            </TabsTrigger>
+            <TabsTrigger value="items" data-testid="items-tab">
+              <Package className="w-4 h-4 mr-2" />
+              All Items ({items.length})
+            </TabsTrigger>
+          </TabsList>
 
-          {items.length === 0 ? (
-            <div className="text-center py-12 bg-slate-50 rounded-2xl">
-              <p className="text-slate-500">
-                {isOwnProfile
-                  ? "You haven't posted any items yet"
-                  : "No items available"}
-              </p>
+          {/* Portfolio Tab */}
+          <TabsContent value="portfolio">
+            <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
+              <TrendingUp className="w-4 h-4" />
+              <span>Items sorted by boost score (most pinned first)</span>
             </div>
-          ) : (
-            <div className="masonry-grid" data-testid="profile-items-grid">
-              {items.map((item) => (
-                <ItemCard key={item.item_id} item={item} owner={profileUser} />
-              ))}
-            </div>
-          )}
-        </div>
+
+            {portfolio.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-2xl">
+                <Briefcase className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                <p className="text-slate-500">
+                  {isOwnProfile
+                    ? "Your portfolio is empty. Add items to showcase your best trades!"
+                    : "No items in portfolio"}
+                </p>
+              </div>
+            ) : (
+              <div className="masonry-grid" data-testid="portfolio-grid">
+                {portfolio.map((item) => (
+                  <div key={item.item_id} className="relative">
+                    <ItemCard item={item} owner={profileUser} />
+                    {item.boost_score > 0 && (
+                      <Badge className="absolute top-3 right-3 bg-amber-500">
+                        <TrendingUp className="w-3 h-3 mr-1" />
+                        {item.boost_score.toFixed(1)}
+                      </Badge>
+                    )}
+                    {isOwnProfile && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="absolute bottom-3 right-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleRemoveFromPortfolio(item.item_id);
+                        }}
+                        data-testid={`remove-portfolio-${item.item_id}`}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* All Items Tab */}
+          <TabsContent value="items">
+            {items.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-2xl">
+                <p className="text-slate-500">
+                  {isOwnProfile
+                    ? "You haven't posted any items yet"
+                    : "No items available"}
+                </p>
+              </div>
+            ) : (
+              <div className="masonry-grid" data-testid="profile-items-grid">
+                {items.map((item) => {
+                  const inPortfolio = (profileUser.portfolio || []).includes(item.item_id);
+                  return (
+                    <div key={item.item_id} className="relative group">
+                      <ItemCard item={item} owner={profileUser} />
+                      {isOwnProfile && !inPortfolio && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="absolute bottom-3 right-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleAddToPortfolio(item.item_id);
+                          }}
+                          data-testid={`add-portfolio-${item.item_id}`}
+                        >
+                          <Briefcase className="w-3 h-3 mr-1" />
+                          Add to Portfolio
+                        </Button>
+                      )}
+                      {inPortfolio && (
+                        <Badge className="absolute bottom-3 right-3 bg-indigo-600">
+                          In Portfolio
+                        </Badge>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Edit Profile Dialog */}
@@ -250,6 +440,38 @@ const Profile = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Account Dialog */}
+      <AlertDialog open={isDeleteAccountOpen} onOpenChange={setIsDeleteAccountOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. All your items, messages, trades, and data will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteAccount}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+              data-testid="confirm-delete-account-btn"
+            >
+              {isDeleting ? "Deleting..." : "Delete Account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Report Modal */}
+      <ReportModal
+        isOpen={isReportOpen}
+        onClose={() => setIsReportOpen(false)}
+        targetType="user"
+        targetId={userId}
+        targetName={profileUser?.username || profileUser?.name}
+      />
     </div>
   );
 };
