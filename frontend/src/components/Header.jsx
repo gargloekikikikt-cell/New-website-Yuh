@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ArrowLeftRight, Plus, MessageCircle, User, LogOut, Package, Shield } from "lucide-react";
+import { GlobalSearch } from "@/components/GlobalSearch";
 
 export const Header = () => {
   const { user, logout } = useAuth();
@@ -44,8 +45,18 @@ export const Header = () => {
             </span>
           </Link>
 
+          {/* Center - Search */}
+          <div className="hidden md:flex flex-1 max-w-md mx-8">
+            <GlobalSearch />
+          </div>
+
           {/* Right side */}
           <div className="flex items-center gap-3">
+            {/* Mobile Search */}
+            <div className="md:hidden">
+              <GlobalSearch />
+            </div>
+
             {/* Post Item Button */}
             <Button
               onClick={() => navigate("/post")}
@@ -53,7 +64,7 @@ export const Header = () => {
               data-testid="post-item-btn"
             >
               <Plus className="w-4 h-4 mr-2" />
-              Post Item
+              <span className="hidden sm:inline">Post Item</span>
             </Button>
 
             {/* Messages */}
