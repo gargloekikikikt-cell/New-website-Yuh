@@ -50,6 +50,9 @@ class User(BaseModel):
     rating: Optional[float] = None
     rating_count: int = 0
     is_admin: bool = False
+    is_suspended: bool = False
+    suspended_until: Optional[datetime] = None
+    suspension_reason: Optional[str] = None
     portfolio: List[str] = []  # List of item_ids
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
