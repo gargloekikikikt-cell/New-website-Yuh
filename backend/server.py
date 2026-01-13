@@ -159,7 +159,7 @@ class PortfolioUpdate(BaseModel):
 
 class SubcategoryCreate(BaseModel):
     name: str
-    parent_category: str
+    parent_category: Optional[str] = None
 
 class SuspendUser(BaseModel):
     days: int  # Number of days to suspend (0 = unsuspend)
@@ -170,6 +170,28 @@ class BulkDeleteItems(BaseModel):
 
 class BulkDeleteCategories(BaseModel):
     category_names: List[str]
+
+class CategoryRequest(BaseModel):
+    request_id: str = Field(default_factory=lambda: f"catreq_{uuid.uuid4().hex[:12]}")
+    user_id: str
+    category_name: str
+    parent_category: Optional[str] = None
+    reason: str
+    status: str = "pending"  # pending, approved, rejected
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class CategoryRequestCreate(BaseModel):
+    category_name: str
+    parent_category: Optional[str] = None
+    reason: str
+
+class AdminCreateCategory(BaseModel):
+    name: str
+    parent_category: Optional[str] = None
+
+class GlobalSearch(BaseModel):
+    query: str
+    search_type: Optional[str] = None  # users, items, categories, or None for all
 
 # ============== AUTH HELPERS ==============
 
