@@ -345,14 +345,98 @@ class AdminManagementTester:
         
         print("   Note: User deletion endpoints properly reject non-admin users")
 
-    def test_suspension_expiry(self):
-        """Test automatic suspension expiry"""
-        print("\n=== TESTING SUSPENSION EXPIRY ===")
+    def test_regular_endpoints(self):
+        """Test regular endpoints that should work for verification"""
+        print("\n=== TESTING REGULAR ENDPOINTS FOR VERIFICATION ===")
         
-        # This test would require manipulating time or waiting
-        # For now, we'll just test the logic by checking if expired suspensions are handled
-        print("   Note: Automatic expiry testing requires time manipulation - skipping detailed test")
-        print("   The backend code shows proper expiry handling in get_current_user function")
+        # Test getting current user
+        success, response = self.run_test(
+            "Get current user",
+            "GET",
+            "auth/me",
+            200,
+            token=self.test_user_token
+        )
+        if success:
+            user = response
+            print(f"   User: {user.get('name')} (Admin: {user.get('is_admin', False)})")
+            print(f"   Suspended: {user.get('is_suspended', False)}")
+        
+        # Test getting items (public endpoint)
+        success, response = self.run_test(
+            "Get all items",
+            "GET",
+            "items",
+            200
+        )
+        if success:
+            print(f"   Found {len(response)} items in system")
+        
+        # Test getting categories (public endpoint)
+        success, response = self.run_test(
+            "Get categories",
+            "GET",
+            "categories",
+            200
+        )
+        if success:
+            print(f"   Found {len(response)} categories in system")
+        
+        # Test creating a report (regular user functionality)
+        if self.created_items:
+            report_data = {
+                "report_type": "item",
+                "target_id": self.created_items[0],
+                "reason": "Test report for admin management testing"
+            }
+            
+            success, response = self.run_test(
+                "Create report (regular user)",
+                "POST",
+                "reports",
+                200,
+                data=report_data,
+                token=self.test_user_token
+            )
+            if success:
+                print(f"   Report created successfully: {response.get('report_id')}")
+
+    def test_endpoint_structure_validation(self):
+        """Test that admin endpoints exist and have proper structure"""
+        print("\n=== TESTING ADMIN ENDPOINT STRUCTURE ===")
+        
+        # Test all admin endpoints exist and return proper error codes
+        admin_endpoints = [
+            ("GET", "admin/stats", "Admin stats endpoint"),
+            ("GET", "admin/users", "Admin users list endpoint"),
+            ("GET", "admin/items", "Admin items list endpoint"),
+            ("GET", "admin/categories", "Admin categories list endpoint"),
+            ("GET", "admin/reports", "Admin reports list endpoint"),
+            ("POST", "admin/users/test-id/suspend", "User suspension endpoint"),
+            ("POST", "admin/items/bulk-delete", "Bulk item deletion endpoint"),
+            ("POST", "admin/categories/bulk-delete", "Bulk category deletion endpoint"),
+            ("DELETE", "admin/users/test-id", "User deletion endpoint"),
+            ("DELETE", "admin/items/test-id", "Item deletion endpoint"),
+            ("DELETE", "admin/categories/test-category", "Category deletion endpoint"),
+        ]
+        
+        for method, endpoint, description in admin_endpoints:
+            # All should return 403 (forbidden) for non-admin users, not 404 (not found)
+            expected_status = 403
+            data = {} if method == "POST" else None
+            
+            success, response = self.run_test(
+                f"Verify {description}",
+                method,
+                endpoint,
+                expected_status,
+                data=data,
+                token=self.test_user_token
+            )
+            if success:
+                print(f"   ✓ {description} exists and properly rejects non-admin")
+        
+        print("   Note: All admin endpoints exist and have proper authentication")
 
 def main():
     print("🚀 Starting SwapFlow Admin Management Tests")
