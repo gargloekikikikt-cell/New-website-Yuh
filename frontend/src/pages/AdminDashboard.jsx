@@ -53,6 +53,8 @@ import {
   Ban,
   BarChart3,
   ChevronRight,
+  Plus,
+  MessageSquarePlus,
 } from "lucide-react";
 
 const AdminDashboard = () => {
@@ -65,6 +67,7 @@ const AdminDashboard = () => {
   const [users, setUsers] = useState([]);
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState({ main: [], sub: [], bottom: [] });
+  const [categoryRequests, setCategoryRequests] = useState([]);
   const [settings, setSettings] = useState({ max_portfolio_items: 7 });
   
   // Form states
@@ -73,6 +76,8 @@ const AdminDashboard = () => {
   const [userSearch, setUserSearch] = useState("");
   const [itemSearch, setItemSearch] = useState("");
   const [showSuspendedOnly, setShowSuspendedOnly] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryParent, setNewCategoryParent] = useState("");
   
   // Selection states for bulk actions
   const [selectedItems, setSelectedItems] = useState([]);
@@ -83,8 +88,7 @@ const AdminDashboard = () => {
   const [suspendDialog, setSuspendDialog] = useState({ open: false, user: null });
   const [suspendDays, setSuspendDays] = useState(7);
   const [suspendReason, setSuspendReason] = useState("");
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isSuspending, setIsSuspending] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Check if user is admin
   useEffect(() => {
@@ -153,6 +157,15 @@ const AdminDashboard = () => {
     }
   }, [API]);
 
+  const fetchCategoryRequests = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API}/admin/category-requests`, { withCredentials: true });
+      setCategoryRequests(response.data);
+    } catch (error) {
+      console.error("Failed to fetch category requests:", error);
+    }
+  }, [API]);
+
   const fetchSettings = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/settings`, { withCredentials: true });
@@ -172,10 +185,11 @@ const AdminDashboard = () => {
       fetchUsers(),
       fetchItems(),
       fetchCategories(),
+      fetchCategoryRequests(),
       fetchSettings(),
     ]);
     setIsLoading(false);
-  }, [fetchStats, fetchReports, fetchAnnouncements, fetchUsers, fetchItems, fetchCategories, fetchSettings]);
+  }, [fetchStats, fetchReports, fetchAnnouncements, fetchUsers, fetchItems, fetchCategories, fetchCategoryRequests, fetchSettings]);
 
   useEffect(() => {
     if (user?.is_admin) {
@@ -201,6 +215,7 @@ const AdminDashboard = () => {
   // Handlers
   const handleCreateAnnouncement = async () => {
     if (!newAnnouncement.trim()) return;
+    setIsProcessing(true);
     try {
       await axios.post(`${API}/admin/announcements`, { message: newAnnouncement.trim() }, { withCredentials: true });
       toast.success("Announcement created");
@@ -208,6 +223,8 @@ const AdminDashboard = () => {
       fetchAnnouncements();
     } catch (error) {
       toast.error("Failed to create announcement");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -243,38 +260,47 @@ const AdminDashboard = () => {
   };
 
   const handleUpdateSettings = async () => {
+    setIsProcessing(true);
     try {
       await axios.put(`${API}/admin/settings?max_portfolio_items=${maxPortfolio}`, {}, { withCredentials: true });
       toast.success("Settings updated");
       fetchSettings();
     } catch (error) {
       toast.error("Failed to update settings");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleDelete = async () => {
-    setIsDeleting(true);
+    setIsProcessing(true);
     try {
       const { type, id } = deleteDialog;
       let endpoint = "";
       if (type === "user") endpoint = `${API}/admin/users/${id}`;
       else if (type === "item") endpoint = `${API}/admin/items/${id}`;
-      else if (type === "category") endpoint = `${API}/admin/categories/${id}`;
+      else if (type === "category") endpoint = `${API}/admin/categories/${encodeURIComponent(id)}`;
 
       await axios.delete(endpoint, { withCredentials: true });
-      toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted`);
+      toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully`);
       setDeleteDialog({ open: false, type: "", id: "", name: "" });
-      fetchAllData();
+      
+      // Refresh relevant data
+      if (type === "user") fetchUsers();
+      else if (type === "item") fetchItems();
+      else if (type === "category") fetchCategories();
+      fetchStats();
     } catch (error) {
-      toast.error(`Failed to delete ${deleteDialog.type}`);
+      console.error("Delete error:", error);
+      toast.error(error.response?.data?.detail || `Failed to delete ${deleteDialog.type}`);
     } finally {
-      setIsDeleting(false);
+      setIsProcessing(false);
     }
   };
 
   const handleSuspend = async () => {
     if (!suspendDialog.user) return;
-    setIsSuspending(true);
+    setIsProcessing(true);
     try {
       await axios.post(
         `${API}/admin/users/${suspendDialog.user.user_id}/suspend`,
@@ -290,12 +316,13 @@ const AdminDashboard = () => {
     } catch (error) {
       toast.error(error.response?.data?.detail || "Failed to suspend user");
     } finally {
-      setIsSuspending(false);
+      setIsProcessing(false);
     }
   };
 
   const handleBulkDeleteItems = async () => {
     if (selectedItems.length === 0) return;
+    setIsProcessing(true);
     try {
       await axios.post(`${API}/admin/items/bulk-delete`, { item_ids: selectedItems }, { withCredentials: true });
       toast.success(`Deleted ${selectedItems.length} items`);
@@ -304,11 +331,14 @@ const AdminDashboard = () => {
       fetchStats();
     } catch (error) {
       toast.error("Failed to delete items");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleBulkDeleteCategories = async () => {
     if (selectedCategories.length === 0) return;
+    setIsProcessing(true);
     try {
       await axios.post(`${API}/admin/categories/bulk-delete`, { category_names: selectedCategories }, { withCredentials: true });
       toast.success(`Deleted ${selectedCategories.length} categories`);
@@ -317,6 +347,65 @@ const AdminDashboard = () => {
       fetchStats();
     } catch (error) {
       toast.error("Failed to delete categories");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) {
+      toast.error("Please enter a category name");
+      return;
+    }
+    if (newCategoryName.includes(" ")) {
+      toast.error("Category name must be a single word");
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      await axios.post(
+        `${API}/admin/categories`,
+        {
+          name: newCategoryName.trim().toLowerCase(),
+          parent_category: newCategoryParent || null,
+        },
+        { withCredentials: true }
+      );
+      toast.success("Category created");
+      setNewCategoryName("");
+      setNewCategoryParent("");
+      fetchCategories();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to create category");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleApproveCategoryRequest = async (requestId) => {
+    setIsProcessing(true);
+    try {
+      await axios.post(`${API}/admin/category-requests/${requestId}/approve`, {}, { withCredentials: true });
+      toast.success("Category request approved and category created");
+      fetchCategoryRequests();
+      fetchCategories();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to approve request");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRejectCategoryRequest = async (requestId) => {
+    setIsProcessing(true);
+    try {
+      await axios.post(`${API}/admin/category-requests/${requestId}/reject`, {}, { withCredentials: true });
+      toast.success("Category request rejected");
+      fetchCategoryRequests();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to reject request");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -343,6 +432,7 @@ const AdminDashboard = () => {
   }
 
   const pendingReports = reports.filter((r) => r.report.status === "pending");
+  const pendingRequests = categoryRequests.filter((r) => r.request.status === "pending");
 
   return (
     <div className="min-h-screen bg-slate-50" data-testid="admin-dashboard">
@@ -350,13 +440,18 @@ const AdminDashboard = () => {
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 py-8">
         {/* Header with Stats */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <h1 className="text-3xl font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>
             Admin Dashboard
           </h1>
-          <Badge variant={pendingReports.length > 0 ? "destructive" : "secondary"}>
-            {pendingReports.length} pending reports
-          </Badge>
+          <div className="flex gap-2">
+            {pendingRequests.length > 0 && (
+              <Badge className="bg-amber-500">{pendingRequests.length} category requests</Badge>
+            )}
+            <Badge variant={pendingReports.length > 0 ? "destructive" : "secondary"}>
+              {pendingReports.length} pending reports
+            </Badge>
+          </div>
         </div>
 
         {/* Quick Stats */}
@@ -397,20 +492,27 @@ const AdminDashboard = () => {
             </div>
             <div className="bg-white rounded-xl p-4 border border-slate-100">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
-                  <Flag className="w-5 h-5 text-red-600" />
+                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                  <Tags className="w-5 h-5 text-purple-600" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-slate-900">{stats.reports.pending}</p>
-                  <p className="text-xs text-slate-500">Pending Reports</p>
+                  <p className="text-2xl font-bold text-slate-900">{stats.categories.total}</p>
+                  <p className="text-xs text-slate-500">Categories</p>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        <Tabs defaultValue="reports" className="w-full">
+        <Tabs defaultValue="categories" className="w-full">
           <TabsList className="mb-6 flex flex-wrap gap-1">
+            <TabsTrigger value="categories" data-testid="categories-tab">
+              <Tags className="w-4 h-4 mr-2" />
+              Categories
+              {pendingRequests.length > 0 && (
+                <Badge className="ml-2 bg-amber-500">{pendingRequests.length}</Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="reports" data-testid="reports-tab">
               <Flag className="w-4 h-4 mr-2" />
               Reports
@@ -423,10 +525,6 @@ const AdminDashboard = () => {
               <Package className="w-4 h-4 mr-2" />
               Items
             </TabsTrigger>
-            <TabsTrigger value="categories" data-testid="categories-tab">
-              <Tags className="w-4 h-4 mr-2" />
-              Categories
-            </TabsTrigger>
             <TabsTrigger value="announcements" data-testid="announcements-tab">
               <Megaphone className="w-4 h-4 mr-2" />
               Announcements
@@ -435,7 +533,169 @@ const AdminDashboard = () => {
               <Settings className="w-4 h-4 mr-2" />
               Settings
             </TabsTrigger>
-          </TabsList>
+          </Tabs>
+
+          {/* Categories Tab */}
+          <TabsContent value="categories" className="space-y-6">
+            {/* Create Category */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6">
+              <h3 className="font-semibold text-slate-900 mb-4">Create New Category</h3>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Input
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value.replace(/\s/g, ''))}
+                  placeholder="Category name (single word)"
+                  className="bg-slate-50 flex-1"
+                  data-testid="new-category-input"
+                />
+                <Select value={newCategoryParent} onValueChange={setNewCategoryParent}>
+                  <SelectTrigger className="bg-slate-50 w-full sm:w-48">
+                    <SelectValue placeholder="Parent (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">None (main category)</SelectItem>
+                    {categories.main.map((cat) => (
+                      <SelectItem key={cat.name} value={cat.name} className="capitalize">{cat.name}</SelectItem>
+                    ))}
+                    {categories.sub.map((cat) => (
+                      <SelectItem key={`sub-${cat.name}`} value={cat.name} className="capitalize pl-6">↳ {cat.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button onClick={handleCreateCategory} disabled={isProcessing} className="bg-indigo-600 hover:bg-indigo-700">
+                  <Plus className="w-4 h-4 mr-2" /> Create
+                </Button>
+              </div>
+            </div>
+
+            {/* Category Requests */}
+            {pendingRequests.length > 0 && (
+              <div className="bg-amber-50 rounded-2xl border border-amber-200 p-6">
+                <h3 className="font-semibold text-amber-800 mb-4 flex items-center gap-2">
+                  <MessageSquarePlus className="w-5 h-5" />
+                  Category Requests ({pendingRequests.length})
+                </h3>
+                <div className="space-y-3">
+                  {pendingRequests.map(({ request, user: reqUser }) => (
+                    <div key={request.request_id} className="bg-white rounded-xl p-4 flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium capitalize">{request.category_name}</span>
+                          {request.parent_category && (
+                            <span className="text-sm text-slate-500">under {request.parent_category}</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-600 mb-2">{request.reason}</p>
+                        <p className="text-xs text-slate-400">
+                          Requested by {reqUser?.username || reqUser?.name || "Unknown"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => handleApproveCategoryRequest(request.request_id)} disabled={isProcessing} className="bg-teal-600 hover:bg-teal-700">
+                          <Check className="w-4 h-4" />
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => handleRejectCategoryRequest(request.request_id)} disabled={isProcessing}>
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Actions */}
+            {selectedCategories.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-4 flex justify-between items-center">
+                <span className="text-slate-600">{selectedCategories.length} categories selected</span>
+                <Button variant="destructive" onClick={handleBulkDeleteCategories} disabled={isProcessing} data-testid="bulk-delete-categories-btn">
+                  <Trash2 className="w-4 h-4 mr-2" /> Delete Selected
+                </Button>
+              </div>
+            )}
+
+            {/* Main Categories */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6">
+              <h3 className="font-semibold text-slate-900 mb-4">Main Categories ({categories.main.length})</h3>
+              {categories.main.length === 0 ? (
+                <p className="text-slate-500">No main categories yet</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {categories.main.map((cat) => (
+                    <div key={cat.name} className="flex items-center gap-1 bg-slate-100 rounded-full pl-3 pr-1 py-1">
+                      <Checkbox
+                        checked={selectedCategories.includes(cat.name)}
+                        onCheckedChange={(checked) => {
+                          if (checked) setSelectedCategories([...selectedCategories, cat.name]);
+                          else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
+                        }}
+                        className="mr-1"
+                      />
+                      <span className="text-sm capitalize">{cat.name}</span>
+                      <span className="text-xs text-slate-500">({cat.click_count})</span>
+                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Sub Categories */}
+            {categories.sub.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-6">
+                <h3 className="font-semibold text-slate-900 mb-4">Subcategories ({categories.sub.length})</h3>
+                <div className="flex flex-wrap gap-2">
+                  {categories.sub.map((cat) => (
+                    <div key={`${cat.parent_category}-${cat.name}`} className="flex items-center gap-1 bg-blue-50 rounded-full pl-3 pr-1 py-1">
+                      <Checkbox
+                        checked={selectedCategories.includes(cat.name)}
+                        onCheckedChange={(checked) => {
+                          if (checked) setSelectedCategories([...selectedCategories, cat.name]);
+                          else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
+                        }}
+                        className="mr-1"
+                      />
+                      <span className="text-xs text-slate-500 capitalize">{cat.parent_category}</span>
+                      <ChevronRight className="w-3 h-3 text-slate-400" />
+                      <span className="text-sm capitalize">{cat.name}</span>
+                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Bottom Categories */}
+            {categories.bottom.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-6">
+                <h3 className="font-semibold text-slate-900 mb-4">Bottom Categories ({categories.bottom.length})</h3>
+                <div className="flex flex-wrap gap-2">
+                  {categories.bottom.map((cat) => (
+                    <div key={`${cat.parent_category}-${cat.name}`} className="flex items-center gap-1 bg-green-50 rounded-full pl-3 pr-1 py-1">
+                      <Checkbox
+                        checked={selectedCategories.includes(cat.name)}
+                        onCheckedChange={(checked) => {
+                          if (checked) setSelectedCategories([...selectedCategories, cat.name]);
+                          else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
+                        }}
+                        className="mr-1"
+                      />
+                      <span className="text-xs text-slate-500 capitalize">{cat.parent_category}</span>
+                      <ChevronRight className="w-3 h-3 text-slate-400" />
+                      <span className="text-sm capitalize">{cat.name}</span>
+                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </TabsContent>
 
           {/* Reports Tab */}
           <TabsContent value="reports" className="space-y-4">
@@ -447,15 +707,15 @@ const AdminDashboard = () => {
             ) : (
               reports.map(({ report, reporter }) => (
                 <div key={report.report_id} className="bg-white rounded-2xl border border-slate-100 p-6" data-testid={`report-${report.report_id}`}>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <Badge variant={report.status === "pending" ? "destructive" : report.status === "reviewed" ? "secondary" : "outline"}>
                           {report.status}
                         </Badge>
                         <Badge variant="outline" className="capitalize">{report.report_type}</Badge>
                       </div>
-                      <p className="text-slate-900 font-medium mb-1">Target: {report.target_id}</p>
+                      <p className="text-slate-900 font-medium mb-1 break-all">Target: {report.target_id}</p>
                       <p className="text-slate-600 mb-2">{report.reason}</p>
                       <p className="text-xs text-slate-500">
                         Reported by: {reporter?.username || reporter?.name || "Unknown"} • {new Date(report.created_at).toLocaleDateString()}
@@ -509,14 +769,14 @@ const AdminDashboard = () => {
                   <div className="p-8 text-center text-slate-500">No users found</div>
                 ) : (
                   users.map((u) => (
-                    <div key={u.user_id} className="p-4 flex items-center justify-between gap-4" data-testid={`user-row-${u.user_id}`}>
+                    <div key={u.user_id} className="p-4 flex items-center justify-between gap-4 flex-wrap" data-testid={`user-row-${u.user_id}`}>
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar className="h-10 w-10 flex-shrink-0">
                           <AvatarImage src={u.picture} alt={u.name} />
                           <AvatarFallback className="bg-indigo-100 text-indigo-600">{getInitials(u.name)}</AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-medium text-slate-900 truncate">{u.username || u.name}</p>
                             {u.is_admin && <Badge className="bg-indigo-600">Admin</Badge>}
                             {u.is_suspended && <Badge variant="destructive">Suspended</Badge>}
@@ -569,9 +829,8 @@ const AdminDashboard = () => {
                   />
                 </div>
                 {selectedItems.length > 0 && (
-                  <Button variant="destructive" onClick={handleBulkDeleteItems} data-testid="bulk-delete-items-btn">
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Delete {selectedItems.length} selected
+                  <Button variant="destructive" onClick={handleBulkDeleteItems} disabled={isProcessing} data-testid="bulk-delete-items-btn">
+                    <Trash2 className="w-4 h-4 mr-2" /> Delete {selectedItems.length} selected
                   </Button>
                 )}
               </div>
@@ -599,7 +858,7 @@ const AdminDashboard = () => {
                         <p className="text-sm text-slate-500">
                           {item.category} • by {owner?.username || owner?.name || "Unknown"}
                         </p>
-                        <div className="flex gap-2 mt-1">
+                        <div className="flex gap-2 mt-1 flex-wrap">
                           {!item.is_available && <Badge variant="secondary">Traded</Badge>}
                           {item.boost_score > 0 && <Badge className="bg-amber-500">{item.boost_score.toFixed(1)} boost</Badge>}
                         </div>
@@ -614,99 +873,10 @@ const AdminDashboard = () => {
             </div>
           </TabsContent>
 
-          {/* Categories Tab */}
-          <TabsContent value="categories" className="space-y-4">
-            {selectedCategories.length > 0 && (
-              <div className="bg-white rounded-2xl border border-slate-100 p-4 flex justify-between items-center">
-                <span className="text-slate-600">{selectedCategories.length} categories selected</span>
-                <Button variant="destructive" onClick={handleBulkDeleteCategories} data-testid="bulk-delete-categories-btn">
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Selected
-                </Button>
-              </div>
-            )}
-
-            {/* Main Categories */}
-            <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h3 className="font-semibold text-slate-900 mb-4">Main Categories ({categories.main.length})</h3>
-              <div className="flex flex-wrap gap-2">
-                {categories.main.map((cat) => (
-                  <div key={cat.name} className="flex items-center gap-1 bg-slate-100 rounded-full pl-3 pr-1 py-1">
-                    <Checkbox
-                      checked={selectedCategories.includes(cat.name)}
-                      onCheckedChange={(checked) => {
-                        if (checked) setSelectedCategories([...selectedCategories, cat.name]);
-                        else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
-                      }}
-                      className="mr-1"
-                    />
-                    <span className="text-sm capitalize">{cat.name}</span>
-                    <span className="text-xs text-slate-500">({cat.click_count})</span>
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Sub Categories */}
-            <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h3 className="font-semibold text-slate-900 mb-4">Subcategories ({categories.sub.length})</h3>
-              <div className="flex flex-wrap gap-2">
-                {categories.sub.map((cat) => (
-                  <div key={`${cat.parent_category}-${cat.name}`} className="flex items-center gap-1 bg-blue-50 rounded-full pl-3 pr-1 py-1">
-                    <Checkbox
-                      checked={selectedCategories.includes(cat.name)}
-                      onCheckedChange={(checked) => {
-                        if (checked) setSelectedCategories([...selectedCategories, cat.name]);
-                        else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
-                      }}
-                      className="mr-1"
-                    />
-                    <span className="text-xs text-slate-500 capitalize">{cat.parent_category}</span>
-                    <ChevronRight className="w-3 h-3 text-slate-400" />
-                    <span className="text-sm capitalize">{cat.name}</span>
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Bottom Categories */}
-            <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h3 className="font-semibold text-slate-900 mb-4">Bottom Categories ({categories.bottom.length})</h3>
-              <div className="flex flex-wrap gap-2">
-                {categories.bottom.map((cat) => (
-                  <div key={`${cat.parent_category}-${cat.name}`} className="flex items-center gap-1 bg-green-50 rounded-full pl-3 pr-1 py-1">
-                    <Checkbox
-                      checked={selectedCategories.includes(cat.name)}
-                      onCheckedChange={(checked) => {
-                        if (checked) setSelectedCategories([...selectedCategories, cat.name]);
-                        else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
-                      }}
-                      className="mr-1"
-                    />
-                    <span className="text-xs text-slate-500 capitalize">{cat.parent_category}</span>
-                    <ChevronRight className="w-3 h-3 text-slate-400" />
-                    <span className="text-sm capitalize">{cat.name}</span>
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </TabsContent>
-
           {/* Announcements Tab */}
           <TabsContent value="announcements" className="space-y-6">
             <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h2 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>
-                Create Announcement
-              </h2>
+              <h2 className="font-semibold text-slate-900 mb-4">Create Announcement</h2>
               <div className="flex gap-3">
                 <Textarea
                   value={newAnnouncement}
@@ -715,27 +885,25 @@ const AdminDashboard = () => {
                   className="flex-1 bg-slate-50"
                   data-testid="announcement-input"
                 />
-                <Button onClick={handleCreateAnnouncement} disabled={!newAnnouncement.trim()} className="bg-indigo-600 hover:bg-indigo-700" data-testid="create-announcement-btn">
+                <Button onClick={handleCreateAnnouncement} disabled={!newAnnouncement.trim() || isProcessing} className="bg-indigo-600 hover:bg-indigo-700" data-testid="create-announcement-btn">
                   <Megaphone className="w-4 h-4 mr-2" /> Post
                 </Button>
               </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h2 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>
-                Active Announcements
-              </h2>
+              <h2 className="font-semibold text-slate-900 mb-4">Announcements</h2>
               {announcements.length === 0 ? (
                 <p className="text-slate-500">No announcements</p>
               ) : (
                 <div className="space-y-3">
                   {announcements.map((ann) => (
-                    <div key={ann.announcement_id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl" data-testid={`announcement-${ann.announcement_id}`}>
-                      <div className="flex-1">
+                    <div key={ann.announcement_id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl gap-4" data-testid={`announcement-${ann.announcement_id}`}>
+                      <div className="flex-1 min-w-0">
                         <p className="text-slate-900">{ann.message}</p>
                         <p className="text-xs text-slate-500 mt-1">{new Date(ann.created_at).toLocaleDateString()}</p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 flex-shrink-0">
                         <Button variant="outline" size="sm" onClick={() => handleToggleAnnouncement(ann.announcement_id, ann.is_active)}>
                           {ann.is_active ? <Eye className="w-4 h-4" /> : <X className="w-4 h-4" />}
                         </Button>
@@ -753,18 +921,16 @@ const AdminDashboard = () => {
           {/* Settings Tab */}
           <TabsContent value="settings">
             <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h2 className="font-semibold text-slate-900 mb-6" style={{ fontFamily: "Manrope, sans-serif" }}>
-                Global Settings
-              </h2>
+              <h2 className="font-semibold text-slate-900 mb-6">Global Settings</h2>
               <div className="space-y-6">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-4">
                   <div>
                     <p className="font-medium text-slate-900">Max Portfolio Items</p>
                     <p className="text-sm text-slate-500">Maximum number of items users can add to their portfolio</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <Input type="number" value={maxPortfolio} onChange={(e) => setMaxPortfolio(parseInt(e.target.value) || 7)} min={1} max={50} className="w-20 bg-slate-50" data-testid="max-portfolio-input" />
-                    <Button onClick={handleUpdateSettings} className="bg-indigo-600 hover:bg-indigo-700" data-testid="save-settings-btn">
+                    <Button onClick={handleUpdateSettings} disabled={isProcessing} className="bg-indigo-600 hover:bg-indigo-700" data-testid="save-settings-btn">
                       Save
                     </Button>
                   </div>
@@ -778,8 +944,7 @@ const AdminDashboard = () => {
                       <li>Each pin adds 10 base points</li>
                       <li>Points decay over time: <code className="bg-slate-200 px-1 rounded">score = 10 / (1 + days_old × 0.1)</code></li>
                       <li>Pin today = 10 pts, 10 days old = 5 pts, 30 days old = 2.5 pts</li>
-                      <li>Total boost = sum of all decayed pin scores</li>
-                      <li>Items with higher boost appear first in their category</li>
+                      <li>Higher boost = higher position in category</li>
                     </ul>
                   </div>
                 </div>
@@ -801,9 +966,9 @@ const AdminDashboard = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
-              {isDeleting ? "Deleting..." : "Delete"}
+            <AlertDialogCancel disabled={isProcessing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} disabled={isProcessing} className="bg-red-600 hover:bg-red-700">
+              {isProcessing ? "Deleting..." : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -813,7 +978,7 @@ const AdminDashboard = () => {
       <Dialog open={suspendDialog.open} onOpenChange={(open) => !open && setSuspendDialog({ open: false, user: null })}>
         <DialogContent className="sm:max-w-md" data-testid="suspend-modal">
           <DialogHeader>
-            <DialogTitle style={{ fontFamily: "Manrope, sans-serif" }}>
+            <DialogTitle>
               {suspendDialog.user?.is_suspended ? "Unsuspend" : "Suspend"} User
             </DialogTitle>
             <DialogDescription>
@@ -856,16 +1021,16 @@ const AdminDashboard = () => {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSuspendDialog({ open: false, user: null })} disabled={isSuspending}>
+            <Button variant="outline" onClick={() => setSuspendDialog({ open: false, user: null })} disabled={isProcessing}>
               Cancel
             </Button>
             <Button
               onClick={handleSuspend}
-              disabled={isSuspending}
+              disabled={isProcessing}
               className={suspendDialog.user?.is_suspended ? "bg-teal-600 hover:bg-teal-700" : "bg-red-600 hover:bg-red-700"}
               data-testid="confirm-suspend-btn"
             >
-              {isSuspending ? "Processing..." : suspendDialog.user?.is_suspended ? "Unsuspend" : "Suspend"}
+              {isProcessing ? "Processing..." : suspendDialog.user?.is_suspended ? "Unsuspend" : "Suspend"}
             </Button>
           </DialogFooter>
         </DialogContent>
