@@ -1082,6 +1082,160 @@ async def admin_delete_category(category_name: str, admin: User = Depends(get_ad
     
     return {"message": "Category deleted"}
 
+# ============== ADMIN MANAGEMENT ENDPOINTS ==============
+
+@api_router.get("/admin/users")
+async def admin_list_users(
+    search: Optional[str] = None,
+    suspended_only: bool = False,
+    admin: User = Depends(get_admin_user)
+):
+    """List all users with optional search (admin only)"""
+    query = {}
+    if search:
+        query["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"email": {"$regex": search, "$options": "i"}},
+            {"username": {"$regex": search, "$options": "i"}}
+        ]
+    if suspended_only:
+        query["is_suspended"] = True
+    
+    users = await db.users.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return users
+
+@api_router.get("/admin/items")
+async def admin_list_items(
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    admin: User = Depends(get_admin_user)
+):
+    """List all items with optional search (admin only)"""
+    query = {}
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}}
+        ]
+    if category:
+        query["category"] = category
+    
+    items = await db.items.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
+    
+    # Add owner info
+    result = []
+    for item in items:
+        owner = await db.users.find_one({"user_id": item["user_id"]}, {"_id": 0, "user_id": 1, "name": 1, "username": 1, "email": 1})
+        result.append({"item": item, "owner": owner})
+    
+    return result
+
+@api_router.get("/admin/categories")
+async def admin_list_categories(admin: User = Depends(get_admin_user)):
+    """List all categories grouped by level (admin only)"""
+    categories = await db.categories.find({}, {"_id": 0}).sort([("level", 1), ("click_count", -1)]).to_list(200)
+    
+    # Group by level
+    grouped = {
+        "main": [c for c in categories if c.get("level", 0) == 0],
+        "sub": [c for c in categories if c.get("level") == 1],
+        "bottom": [c for c in categories if c.get("level") == 2]
+    }
+    
+    return grouped
+
+@api_router.post("/admin/users/{user_id}/suspend")
+async def admin_suspend_user(user_id: str, data: SuspendUser, admin: User = Depends(get_admin_user)):
+    """Suspend or unsuspend a user (admin only)"""
+    if user_id == admin.user_id:
+        raise HTTPException(status_code=400, detail="Cannot suspend yourself")
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.get("is_admin"):
+        raise HTTPException(status_code=400, detail="Cannot suspend another admin")
+    
+    if data.days <= 0:
+        # Unsuspend
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "is_suspended": False,
+                "suspended_until": None,
+                "suspension_reason": None
+            }}
+        )
+        return {"message": "User unsuspended"}
+    else:
+        # Suspend
+        suspended_until = datetime.now(timezone.utc) + timedelta(days=data.days)
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "is_suspended": True,
+                "suspended_until": suspended_until.isoformat(),
+                "suspension_reason": data.reason or f"Suspended for {data.days} days"
+            }}
+        )
+        # Also invalidate their sessions
+        await db.user_sessions.delete_many({"user_id": user_id})
+        return {"message": f"User suspended until {suspended_until.strftime('%Y-%m-%d %H:%M UTC')}"}
+
+@api_router.post("/admin/items/bulk-delete")
+async def admin_bulk_delete_items(data: BulkDeleteItems, admin: User = Depends(get_admin_user)):
+    """Delete multiple items at once (admin only)"""
+    deleted_count = 0
+    for item_id in data.item_ids:
+        item = await db.items.find_one({"item_id": item_id}, {"_id": 0})
+        if item:
+            # Remove from portfolio if present
+            await db.users.update_one(
+                {"user_id": item["user_id"]},
+                {"$pull": {"portfolio": item_id}}
+            )
+            # Delete pins
+            await db.pins.delete_many({"item_id": item_id})
+            # Delete item
+            await db.items.delete_one({"item_id": item_id})
+            deleted_count += 1
+    
+    return {"message": f"Deleted {deleted_count} items"}
+
+@api_router.post("/admin/categories/bulk-delete")
+async def admin_bulk_delete_categories(data: BulkDeleteCategories, admin: User = Depends(get_admin_user)):
+    """Delete multiple categories at once (admin only)"""
+    deleted_count = 0
+    for name in data.category_names:
+        result = await db.categories.delete_one({"name": name})
+        if result.deleted_count > 0:
+            # Also delete child categories
+            await db.categories.delete_many({"parent_category": name})
+            deleted_count += 1
+    
+    return {"message": f"Deleted {deleted_count} categories"}
+
+@api_router.get("/admin/stats")
+async def admin_get_stats(admin: User = Depends(get_admin_user)):
+    """Get platform statistics (admin only)"""
+    total_users = await db.users.count_documents({})
+    suspended_users = await db.users.count_documents({"is_suspended": True})
+    total_items = await db.items.count_documents({})
+    available_items = await db.items.count_documents({"is_available": True})
+    total_trades = await db.trades.count_documents({})
+    completed_trades = await db.trades.count_documents({"is_completed": True})
+    pending_reports = await db.reports.count_documents({"status": "pending"})
+    total_categories = await db.categories.count_documents({})
+    
+    return {
+        "users": {"total": total_users, "suspended": suspended_users},
+        "items": {"total": total_items, "available": available_items},
+        "trades": {"total": total_trades, "completed": completed_trades},
+        "reports": {"pending": pending_reports},
+        "categories": {"total": total_categories}
+    }
+
 # ============== ANNOUNCEMENT ENDPOINTS ==============
 
 @api_router.get("/announcements")
