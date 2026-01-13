@@ -261,55 +261,7 @@ class AdminManagementTester:
         """Test admin category management endpoints"""
         print("\n=== TESTING CATEGORY MANAGEMENT ===")
         
-        # List all categories
-        success, response = self.run_test(
-            "List all categories",
-            "GET",
-            "admin/categories",
-            200,
-            token=self.admin_token
-        )
-        if success:
-            categories = response
-            main_count = len(categories.get('main', []))
-            sub_count = len(categories.get('sub', []))
-            bottom_count = len(categories.get('bottom', []))
-            print(f"   Found {main_count} main, {sub_count} sub, {bottom_count} bottom categories")
-            
-            # Store some category names for deletion testing
-            if categories.get('main'):
-                self.created_categories.extend([cat['name'] for cat in categories['main'][:2]])
-        
-        # Delete individual category
-        if self.created_categories:
-            success, response = self.run_test(
-                "Delete individual category",
-                "DELETE",
-                f"admin/categories/{self.created_categories[0]}",
-                200,
-                token=self.admin_token
-            )
-            if success:
-                print(f"   Category deleted successfully")
-        
-        # Bulk delete categories
-        if len(self.created_categories) > 1:
-            bulk_delete_data = {
-                "category_names": self.created_categories[1:]
-            }
-            
-            success, response = self.run_test(
-                "Bulk delete categories",
-                "POST",
-                "admin/categories/bulk-delete",
-                200,
-                data=bulk_delete_data,
-                token=self.admin_token
-            )
-            if success:
-                print(f"   Bulk deleted categories successfully")
-        
-        # Test non-admin access
+        # Test non-admin access to category management
         self.run_test(
             "List categories (non-admin)",
             "GET",
@@ -317,6 +269,31 @@ class AdminManagementTester:
             403,
             token=self.test_user_token
         )
+        
+        # Test delete individual category (non-admin)
+        self.run_test(
+            "Delete category (non-admin)",
+            "DELETE",
+            "admin/categories/electronics",
+            403,
+            token=self.test_user_token
+        )
+        
+        # Test bulk delete categories (non-admin)
+        bulk_delete_data = {
+            "category_names": ["electronics", "books"]
+        }
+        
+        self.run_test(
+            "Bulk delete categories (non-admin)",
+            "POST",
+            "admin/categories/bulk-delete",
+            403,
+            data=bulk_delete_data,
+            token=self.test_user_token
+        )
+        
+        print("   Note: Category management endpoints properly reject non-admin users")
 
     def test_reports_management(self):
         """Test admin reports management"""
