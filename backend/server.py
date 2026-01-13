@@ -161,6 +161,16 @@ class SubcategoryCreate(BaseModel):
     name: str
     parent_category: str
 
+class SuspendUser(BaseModel):
+    days: int  # Number of days to suspend (0 = unsuspend)
+    reason: Optional[str] = None
+
+class BulkDeleteItems(BaseModel):
+    item_ids: List[str]
+
+class BulkDeleteCategories(BaseModel):
+    category_names: List[str]
+
 # ============== AUTH HELPERS ==============
 
 async def get_current_user(request: Request) -> User:
