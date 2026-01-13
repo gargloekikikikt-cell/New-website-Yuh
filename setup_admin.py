@@ -8,7 +8,7 @@ import uuid
 
 def setup_admin_user():
     """Setup admin user and session for testing"""
-    base_url = "https://tradehub-310.preview.emergentagent.com/api"
+    base_url = "https://swapspot-38.preview.emergentagent.com/api"
     
     # Admin email from the backend code
     admin_email = "creatorbennett@gmail.com"

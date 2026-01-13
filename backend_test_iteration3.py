@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import time
 
 class AdminManagementTester:
-    def __init__(self, base_url="https://tradehub-310.preview.emergentagent.com/api"):
+    def __init__(self, base_url="https://swapspot-38.preview.emergentagent.com/api"):
         self.base_url = base_url
         # Since we can't create a real admin user, we'll test the endpoints
         # and verify they properly reject non-admin users

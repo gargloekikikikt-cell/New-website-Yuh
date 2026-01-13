@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 class SwapFlowAPITester:
-    def __init__(self, base_url="https://tradehub-310.preview.emergentagent.com/api"):
+    def __init__(self, base_url="https://swapspot-38.preview.emergentagent.com/api"):
         self.base_url = base_url
         self.session_token1 = "test_session_1768106897885"  # Test User 1
         self.user_id1 = "test-user-1768106897885"

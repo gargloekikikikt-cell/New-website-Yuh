@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 class AdminAPITester:
-    def __init__(self, base_url="https://tradehub-310.preview.emergentagent.com/api"):
+    def __init__(self, base_url="https://swapspot-38.preview.emergentagent.com/api"):
         self.base_url = base_url
         # Admin token - using the admin email from the requirements
         self.admin_token = "admin_session_1768286105"  # Admin user

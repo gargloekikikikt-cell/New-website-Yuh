@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 class SwapFlowAPITesterV2:
-    def __init__(self, base_url="https://tradehub-310.preview.emergentagent.com/api"):
+    def __init__(self, base_url="https://swapspot-38.preview.emergentagent.com/api"):
         self.base_url = base_url
         # Admin user
         self.admin_token = "admin_session_1768281854544"
