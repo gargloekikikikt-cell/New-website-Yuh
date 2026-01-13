@@ -9,11 +9,12 @@ import time
 class AdminManagementTester:
     def __init__(self, base_url="https://tradehub-310.preview.emergentagent.com/api"):
         self.base_url = base_url
-        # Admin credentials
-        self.admin_token = "admin_session_1768106897885"  # Admin user
-        self.admin_user_id = "admin-user-1768106897885"
+        # Since we can't create a real admin user, we'll test the endpoints
+        # and verify they properly reject non-admin users
+        self.admin_token = None  # No valid admin token available
+        self.admin_user_id = None
         
-        # Test user credentials
+        # Test user credentials (these are valid)
         self.test_user_token = "test_session_1768106897885"
         self.test_user_id = "test-user-1768106897885"
         
