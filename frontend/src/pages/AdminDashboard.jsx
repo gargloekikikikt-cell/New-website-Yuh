@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +28,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Loader2,
@@ -39,19 +49,42 @@ import {
   Check,
   Eye,
   X,
+  Search,
+  Ban,
+  BarChart3,
+  ChevronRight,
 } from "lucide-react";
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { user, API } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
+  const [stats, setStats] = useState(null);
   const [reports, setReports] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState({ main: [], sub: [], bottom: [] });
   const [settings, setSettings] = useState({ max_portfolio_items: 7 });
+  
+  // Form states
   const [newAnnouncement, setNewAnnouncement] = useState("");
   const [maxPortfolio, setMaxPortfolio] = useState(7);
+  const [userSearch, setUserSearch] = useState("");
+  const [itemSearch, setItemSearch] = useState("");
+  const [showSuspendedOnly, setShowSuspendedOnly] = useState(false);
+  
+  // Selection states for bulk actions
+  const [selectedItems, setSelectedItems] = useState([]);
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  
+  // Modal states
   const [deleteDialog, setDeleteDialog] = useState({ open: false, type: "", id: "", name: "" });
+  const [suspendDialog, setSuspendDialog] = useState({ open: false, user: null });
+  const [suspendDays, setSuspendDays] = useState(7);
+  const [suspendReason, setSuspendReason] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSuspending, setIsSuspending] = useState(false);
 
   // Check if user is admin
   useEffect(() => {
@@ -61,41 +94,118 @@ const AdminDashboard = () => {
     }
   }, [user, navigate]);
 
-  const fetchData = useCallback(async () => {
+  const fetchStats = useCallback(async () => {
     try {
-      const [reportsRes, announcementsRes, settingsRes] = await Promise.all([
-        axios.get(`${API}/admin/reports`, { withCredentials: true }),
-        axios.get(`${API}/announcements`, { withCredentials: true }),
-        axios.get(`${API}/settings`, { withCredentials: true }),
-      ]);
-      setReports(reportsRes.data);
-      setAnnouncements(announcementsRes.data);
-      setSettings(settingsRes.data);
-      setMaxPortfolio(settingsRes.data.max_portfolio_items || 7);
+      const response = await axios.get(`${API}/admin/stats`, { withCredentials: true });
+      setStats(response.data);
     } catch (error) {
-      console.error("Failed to fetch admin data:", error);
-    } finally {
-      setIsLoading(false);
+      console.error("Failed to fetch stats:", error);
     }
   }, [API]);
 
+  const fetchReports = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API}/admin/reports`, { withCredentials: true });
+      setReports(response.data);
+    } catch (error) {
+      console.error("Failed to fetch reports:", error);
+    }
+  }, [API]);
+
+  const fetchAnnouncements = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API}/announcements`, { withCredentials: true });
+      setAnnouncements(response.data);
+    } catch (error) {
+      console.error("Failed to fetch announcements:", error);
+    }
+  }, [API]);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      const params = {};
+      if (userSearch) params.search = userSearch;
+      if (showSuspendedOnly) params.suspended_only = true;
+      const response = await axios.get(`${API}/admin/users`, { params, withCredentials: true });
+      setUsers(response.data);
+    } catch (error) {
+      console.error("Failed to fetch users:", error);
+    }
+  }, [API, userSearch, showSuspendedOnly]);
+
+  const fetchItems = useCallback(async () => {
+    try {
+      const params = {};
+      if (itemSearch) params.search = itemSearch;
+      const response = await axios.get(`${API}/admin/items`, { params, withCredentials: true });
+      setItems(response.data);
+    } catch (error) {
+      console.error("Failed to fetch items:", error);
+    }
+  }, [API, itemSearch]);
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API}/admin/categories`, { withCredentials: true });
+      setCategories(response.data);
+    } catch (error) {
+      console.error("Failed to fetch categories:", error);
+    }
+  }, [API]);
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API}/settings`, { withCredentials: true });
+      setSettings(response.data);
+      setMaxPortfolio(response.data.max_portfolio_items || 7);
+    } catch (error) {
+      console.error("Failed to fetch settings:", error);
+    }
+  }, [API]);
+
+  const fetchAllData = useCallback(async () => {
+    setIsLoading(true);
+    await Promise.all([
+      fetchStats(),
+      fetchReports(),
+      fetchAnnouncements(),
+      fetchUsers(),
+      fetchItems(),
+      fetchCategories(),
+      fetchSettings(),
+    ]);
+    setIsLoading(false);
+  }, [fetchStats, fetchReports, fetchAnnouncements, fetchUsers, fetchItems, fetchCategories, fetchSettings]);
+
   useEffect(() => {
     if (user?.is_admin) {
-      fetchData();
+      fetchAllData();
     }
-  }, [user, fetchData]);
+  }, [user, fetchAllData]);
 
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (user?.is_admin) fetchUsers();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [userSearch, showSuspendedOnly, fetchUsers, user]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (user?.is_admin) fetchItems();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [itemSearch, fetchItems, user]);
+
+  // Handlers
   const handleCreateAnnouncement = async () => {
     if (!newAnnouncement.trim()) return;
     try {
-      await axios.post(
-        `${API}/admin/announcements`,
-        { message: newAnnouncement.trim() },
-        { withCredentials: true }
-      );
+      await axios.post(`${API}/admin/announcements`, { message: newAnnouncement.trim() }, { withCredentials: true });
       toast.success("Announcement created");
       setNewAnnouncement("");
-      fetchData();
+      fetchAnnouncements();
     } catch (error) {
       toast.error("Failed to create announcement");
     }
@@ -103,13 +213,9 @@ const AdminDashboard = () => {
 
   const handleToggleAnnouncement = async (id, currentStatus) => {
     try {
-      await axios.put(
-        `${API}/admin/announcements/${id}?is_active=${!currentStatus}`,
-        {},
-        { withCredentials: true }
-      );
+      await axios.put(`${API}/admin/announcements/${id}?is_active=${!currentStatus}`, {}, { withCredentials: true });
       toast.success(`Announcement ${!currentStatus ? "activated" : "deactivated"}`);
-      fetchData();
+      fetchAnnouncements();
     } catch (error) {
       toast.error("Failed to update announcement");
     }
@@ -119,7 +225,7 @@ const AdminDashboard = () => {
     try {
       await axios.delete(`${API}/admin/announcements/${id}`, { withCredentials: true });
       toast.success("Announcement deleted");
-      fetchData();
+      fetchAnnouncements();
     } catch (error) {
       toast.error("Failed to delete announcement");
     }
@@ -127,13 +233,10 @@ const AdminDashboard = () => {
 
   const handleUpdateReportStatus = async (reportId, status) => {
     try {
-      await axios.put(
-        `${API}/admin/reports/${reportId}?status=${status}`,
-        {},
-        { withCredentials: true }
-      );
+      await axios.put(`${API}/admin/reports/${reportId}?status=${status}`, {}, { withCredentials: true });
       toast.success("Report status updated");
-      fetchData();
+      fetchReports();
+      fetchStats();
     } catch (error) {
       toast.error("Failed to update report");
     }
@@ -141,13 +244,9 @@ const AdminDashboard = () => {
 
   const handleUpdateSettings = async () => {
     try {
-      await axios.put(
-        `${API}/admin/settings?max_portfolio_items=${maxPortfolio}`,
-        {},
-        { withCredentials: true }
-      );
+      await axios.put(`${API}/admin/settings?max_portfolio_items=${maxPortfolio}`, {}, { withCredentials: true });
       toast.success("Settings updated");
-      fetchData();
+      fetchSettings();
     } catch (error) {
       toast.error("Failed to update settings");
     }
@@ -165,7 +264,7 @@ const AdminDashboard = () => {
       await axios.delete(endpoint, { withCredentials: true });
       toast.success(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted`);
       setDeleteDialog({ open: false, type: "", id: "", name: "" });
-      fetchData();
+      fetchAllData();
     } catch (error) {
       toast.error(`Failed to delete ${deleteDialog.type}`);
     } finally {
@@ -173,13 +272,64 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleSuspend = async () => {
+    if (!suspendDialog.user) return;
+    setIsSuspending(true);
+    try {
+      await axios.post(
+        `${API}/admin/users/${suspendDialog.user.user_id}/suspend`,
+        { days: suspendDays, reason: suspendReason },
+        { withCredentials: true }
+      );
+      toast.success(suspendDays > 0 ? `User suspended for ${suspendDays} days` : "User unsuspended");
+      setSuspendDialog({ open: false, user: null });
+      setSuspendDays(7);
+      setSuspendReason("");
+      fetchUsers();
+      fetchStats();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Failed to suspend user");
+    } finally {
+      setIsSuspending(false);
+    }
+  };
+
+  const handleBulkDeleteItems = async () => {
+    if (selectedItems.length === 0) return;
+    try {
+      await axios.post(`${API}/admin/items/bulk-delete`, { item_ids: selectedItems }, { withCredentials: true });
+      toast.success(`Deleted ${selectedItems.length} items`);
+      setSelectedItems([]);
+      fetchItems();
+      fetchStats();
+    } catch (error) {
+      toast.error("Failed to delete items");
+    }
+  };
+
+  const handleBulkDeleteCategories = async () => {
+    if (selectedCategories.length === 0) return;
+    try {
+      await axios.post(`${API}/admin/categories/bulk-delete`, { category_names: selectedCategories }, { withCredentials: true });
+      toast.success(`Deleted ${selectedCategories.length} categories`);
+      setSelectedCategories([]);
+      fetchCategories();
+      fetchStats();
+    } catch (error) {
+      toast.error("Failed to delete categories");
+    }
+  };
+
   const openDeleteDialog = (type, id, name) => {
     setDeleteDialog({ open: true, type, id, name });
   };
 
-  if (!user?.is_admin) {
-    return null;
-  }
+  const getInitials = (name) => {
+    if (!name) return "U";
+    return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
+  };
+
+  if (!user?.is_admin) return null;
 
   if (isLoading) {
     return (
@@ -198,113 +348,94 @@ const AdminDashboard = () => {
     <div className="min-h-screen bg-slate-50" data-testid="admin-dashboard">
       <Header />
 
-      <main className="max-w-6xl mx-auto px-4 md:px-8 lg:px-12 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <h1
-            className="text-3xl font-bold text-slate-900"
-            style={{ fontFamily: "Manrope, sans-serif" }}
-          >
+      <main className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 py-8">
+        {/* Header with Stats */}
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>
             Admin Dashboard
           </h1>
-          <Badge className="bg-indigo-600">
+          <Badge variant={pendingReports.length > 0 ? "destructive" : "secondary"}>
             {pendingReports.length} pending reports
           </Badge>
         </div>
 
-        <Tabs defaultValue="announcements" className="w-full">
-          <TabsList className="mb-6 grid grid-cols-3 w-full max-w-md">
-            <TabsTrigger value="announcements" data-testid="announcements-tab">
-              <Megaphone className="w-4 h-4 mr-2" />
-              Announcements
-            </TabsTrigger>
+        {/* Quick Stats */}
+        {stats && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div className="bg-white rounded-xl p-4 border border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{stats.users.total}</p>
+                  <p className="text-xs text-slate-500">Users ({stats.users.suspended} suspended)</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl p-4 border border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center">
+                  <Package className="w-5 h-5 text-teal-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{stats.items.total}</p>
+                  <p className="text-xs text-slate-500">Items ({stats.items.available} available)</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl p-4 border border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                  <BarChart3 className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{stats.trades.completed}</p>
+                  <p className="text-xs text-slate-500">Completed Trades</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl p-4 border border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+                  <Flag className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-900">{stats.reports.pending}</p>
+                  <p className="text-xs text-slate-500">Pending Reports</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <Tabs defaultValue="reports" className="w-full">
+          <TabsList className="mb-6 flex flex-wrap gap-1">
             <TabsTrigger value="reports" data-testid="reports-tab">
               <Flag className="w-4 h-4 mr-2" />
               Reports
+            </TabsTrigger>
+            <TabsTrigger value="users" data-testid="users-tab">
+              <Users className="w-4 h-4 mr-2" />
+              Users
+            </TabsTrigger>
+            <TabsTrigger value="items" data-testid="items-tab">
+              <Package className="w-4 h-4 mr-2" />
+              Items
+            </TabsTrigger>
+            <TabsTrigger value="categories" data-testid="categories-tab">
+              <Tags className="w-4 h-4 mr-2" />
+              Categories
+            </TabsTrigger>
+            <TabsTrigger value="announcements" data-testid="announcements-tab">
+              <Megaphone className="w-4 h-4 mr-2" />
+              Announcements
             </TabsTrigger>
             <TabsTrigger value="settings" data-testid="settings-tab">
               <Settings className="w-4 h-4 mr-2" />
               Settings
             </TabsTrigger>
           </TabsList>
-
-          {/* Announcements Tab */}
-          <TabsContent value="announcements" className="space-y-6">
-            {/* Create Announcement */}
-            <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h2
-                className="font-semibold text-slate-900 mb-4"
-                style={{ fontFamily: "Manrope, sans-serif" }}
-              >
-                Create Announcement
-              </h2>
-              <div className="flex gap-3">
-                <Textarea
-                  value={newAnnouncement}
-                  onChange={(e) => setNewAnnouncement(e.target.value)}
-                  placeholder="Enter announcement message..."
-                  className="flex-1 bg-slate-50"
-                  data-testid="announcement-input"
-                />
-                <Button
-                  onClick={handleCreateAnnouncement}
-                  disabled={!newAnnouncement.trim()}
-                  className="bg-indigo-600 hover:bg-indigo-700"
-                  data-testid="create-announcement-btn"
-                >
-                  <Megaphone className="w-4 h-4 mr-2" />
-                  Post
-                </Button>
-              </div>
-            </div>
-
-            {/* Existing Announcements */}
-            <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h2
-                className="font-semibold text-slate-900 mb-4"
-                style={{ fontFamily: "Manrope, sans-serif" }}
-              >
-                Active Announcements
-              </h2>
-              {announcements.length === 0 ? (
-                <p className="text-slate-500">No announcements</p>
-              ) : (
-                <div className="space-y-3">
-                  {announcements.map((ann) => (
-                    <div
-                      key={ann.announcement_id}
-                      className="flex items-center justify-between p-4 bg-slate-50 rounded-xl"
-                      data-testid={`announcement-${ann.announcement_id}`}
-                    >
-                      <div className="flex-1">
-                        <p className="text-slate-900">{ann.message}</p>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {new Date(ann.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleToggleAnnouncement(ann.announcement_id, ann.is_active)}
-                          data-testid={`toggle-announcement-${ann.announcement_id}`}
-                        >
-                          {ann.is_active ? <Eye className="w-4 h-4" /> : <X className="w-4 h-4" />}
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleDeleteAnnouncement(ann.announcement_id)}
-                          data-testid={`delete-announcement-${ann.announcement_id}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </TabsContent>
 
           {/* Reports Tab */}
           <TabsContent value="reports" className="space-y-4">
@@ -315,63 +446,34 @@ const AdminDashboard = () => {
               </div>
             ) : (
               reports.map(({ report, reporter }) => (
-                <div
-                  key={report.report_id}
-                  className="bg-white rounded-2xl border border-slate-100 p-6"
-                  data-testid={`report-${report.report_id}`}
-                >
-                  <div className="flex items-start justify-between">
+                <div key={report.report_id} className="bg-white rounded-2xl border border-slate-100 p-6" data-testid={`report-${report.report_id}`}>
+                  <div className="flex items-start justify-between gap-4">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Badge
-                          variant={report.status === "pending" ? "destructive" : "secondary"}
-                        >
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <Badge variant={report.status === "pending" ? "destructive" : report.status === "reviewed" ? "secondary" : "outline"}>
                           {report.status}
                         </Badge>
-                        <Badge variant="outline" className="capitalize">
-                          {report.report_type}
-                        </Badge>
+                        <Badge variant="outline" className="capitalize">{report.report_type}</Badge>
                       </div>
-                      <p className="text-slate-900 font-medium mb-1">
-                        Target: {report.target_id}
-                      </p>
+                      <p className="text-slate-900 font-medium mb-1">Target: {report.target_id}</p>
                       <p className="text-slate-600 mb-2">{report.reason}</p>
                       <p className="text-xs text-slate-500">
-                        Reported by: {reporter?.username || reporter?.name || "Unknown"} •{" "}
-                        {new Date(report.created_at).toLocaleDateString()}
+                        Reported by: {reporter?.username || reporter?.name || "Unknown"} • {new Date(report.created_at).toLocaleDateString()}
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2">
                       {report.status === "pending" && (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleUpdateReportStatus(report.report_id, "reviewed")}
-                            data-testid={`review-report-${report.report_id}`}
-                          >
-                            <Eye className="w-4 h-4 mr-1" />
-                            Review
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={() => handleUpdateReportStatus(report.report_id, "reviewed")}>
+                            <Eye className="w-4 h-4 mr-1" /> Review
                           </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleUpdateReportStatus(report.report_id, "resolved")}
-                            data-testid={`resolve-report-${report.report_id}`}
-                          >
-                            <Check className="w-4 h-4 mr-1" />
-                            Resolve
+                          <Button variant="outline" size="sm" onClick={() => handleUpdateReportStatus(report.report_id, "resolved")}>
+                            <Check className="w-4 h-4 mr-1" /> Resolve
                           </Button>
-                        </>
+                        </div>
                       )}
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => openDeleteDialog(report.report_type, report.target_id, report.target_id)}
-                        data-testid={`delete-target-${report.report_id}`}
-                      >
-                        <Trash2 className="w-4 h-4 mr-1" />
-                        Delete {report.report_type}
+                      <Button variant="destructive" size="sm" onClick={() => openDeleteDialog(report.report_type, report.target_id, report.target_id)}>
+                        <Trash2 className="w-4 h-4 mr-1" /> Delete {report.report_type}
                       </Button>
                     </div>
                   </div>
@@ -380,39 +482,289 @@ const AdminDashboard = () => {
             )}
           </TabsContent>
 
+          {/* Users Tab */}
+          <TabsContent value="users" className="space-y-4">
+            <div className="bg-white rounded-2xl border border-slate-100 p-4">
+              <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Search users by name, email, or username..."
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    className="pl-10 bg-slate-50"
+                    data-testid="user-search-input"
+                  />
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <Checkbox checked={showSuspendedOnly} onCheckedChange={setShowSuspendedOnly} />
+                  <span className="text-sm text-slate-600">Suspended only</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+              <div className="divide-y divide-slate-100">
+                {users.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500">No users found</div>
+                ) : (
+                  users.map((u) => (
+                    <div key={u.user_id} className="p-4 flex items-center justify-between gap-4" data-testid={`user-row-${u.user_id}`}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar className="h-10 w-10 flex-shrink-0">
+                          <AvatarImage src={u.picture} alt={u.name} />
+                          <AvatarFallback className="bg-indigo-100 text-indigo-600">{getInitials(u.name)}</AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-slate-900 truncate">{u.username || u.name}</p>
+                            {u.is_admin && <Badge className="bg-indigo-600">Admin</Badge>}
+                            {u.is_suspended && <Badge variant="destructive">Suspended</Badge>}
+                          </div>
+                          <p className="text-sm text-slate-500 truncate">{u.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-sm text-slate-500">{u.trade_points || 0} pts</span>
+                        {!u.is_admin && (
+                          <>
+                            <Button
+                              variant={u.is_suspended ? "outline" : "secondary"}
+                              size="sm"
+                              onClick={() => {
+                                setSuspendDays(u.is_suspended ? 0 : 7);
+                                setSuspendReason("");
+                                setSuspendDialog({ open: true, user: u });
+                              }}
+                              data-testid={`suspend-btn-${u.user_id}`}
+                            >
+                              <Ban className="w-4 h-4 mr-1" />
+                              {u.is_suspended ? "Unsuspend" : "Suspend"}
+                            </Button>
+                            <Button variant="destructive" size="sm" onClick={() => openDeleteDialog("user", u.user_id, u.name)}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Items Tab */}
+          <TabsContent value="items" className="space-y-4">
+            <div className="bg-white rounded-2xl border border-slate-100 p-4">
+              <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Search items by title..."
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                    className="pl-10 bg-slate-50"
+                    data-testid="item-search-input"
+                  />
+                </div>
+                {selectedItems.length > 0 && (
+                  <Button variant="destructive" onClick={handleBulkDeleteItems} data-testid="bulk-delete-items-btn">
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete {selectedItems.length} selected
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+              <div className="divide-y divide-slate-100">
+                {items.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500">No items found</div>
+                ) : (
+                  items.map(({ item, owner }) => (
+                    <div key={item.item_id} className="p-4 flex items-center gap-4" data-testid={`item-row-${item.item_id}`}>
+                      <Checkbox
+                        checked={selectedItems.includes(item.item_id)}
+                        onCheckedChange={(checked) => {
+                          if (checked) setSelectedItems([...selectedItems, item.item_id]);
+                          else setSelectedItems(selectedItems.filter((id) => id !== item.item_id));
+                        }}
+                      />
+                      <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-slate-100">
+                        <img src={item.image} alt={item.title} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-slate-900 truncate">{item.title}</p>
+                        <p className="text-sm text-slate-500">
+                          {item.category} • by {owner?.username || owner?.name || "Unknown"}
+                        </p>
+                        <div className="flex gap-2 mt-1">
+                          {!item.is_available && <Badge variant="secondary">Traded</Badge>}
+                          {item.boost_score > 0 && <Badge className="bg-amber-500">{item.boost_score.toFixed(1)} boost</Badge>}
+                        </div>
+                      </div>
+                      <Button variant="destructive" size="sm" onClick={() => openDeleteDialog("item", item.item_id, item.title)}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Categories Tab */}
+          <TabsContent value="categories" className="space-y-4">
+            {selectedCategories.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-4 flex justify-between items-center">
+                <span className="text-slate-600">{selectedCategories.length} categories selected</span>
+                <Button variant="destructive" onClick={handleBulkDeleteCategories} data-testid="bulk-delete-categories-btn">
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Selected
+                </Button>
+              </div>
+            )}
+
+            {/* Main Categories */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6">
+              <h3 className="font-semibold text-slate-900 mb-4">Main Categories ({categories.main.length})</h3>
+              <div className="flex flex-wrap gap-2">
+                {categories.main.map((cat) => (
+                  <div key={cat.name} className="flex items-center gap-1 bg-slate-100 rounded-full pl-3 pr-1 py-1">
+                    <Checkbox
+                      checked={selectedCategories.includes(cat.name)}
+                      onCheckedChange={(checked) => {
+                        if (checked) setSelectedCategories([...selectedCategories, cat.name]);
+                        else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
+                      }}
+                      className="mr-1"
+                    />
+                    <span className="text-sm capitalize">{cat.name}</span>
+                    <span className="text-xs text-slate-500">({cat.click_count})</span>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Sub Categories */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6">
+              <h3 className="font-semibold text-slate-900 mb-4">Subcategories ({categories.sub.length})</h3>
+              <div className="flex flex-wrap gap-2">
+                {categories.sub.map((cat) => (
+                  <div key={`${cat.parent_category}-${cat.name}`} className="flex items-center gap-1 bg-blue-50 rounded-full pl-3 pr-1 py-1">
+                    <Checkbox
+                      checked={selectedCategories.includes(cat.name)}
+                      onCheckedChange={(checked) => {
+                        if (checked) setSelectedCategories([...selectedCategories, cat.name]);
+                        else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
+                      }}
+                      className="mr-1"
+                    />
+                    <span className="text-xs text-slate-500 capitalize">{cat.parent_category}</span>
+                    <ChevronRight className="w-3 h-3 text-slate-400" />
+                    <span className="text-sm capitalize">{cat.name}</span>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Bottom Categories */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6">
+              <h3 className="font-semibold text-slate-900 mb-4">Bottom Categories ({categories.bottom.length})</h3>
+              <div className="flex flex-wrap gap-2">
+                {categories.bottom.map((cat) => (
+                  <div key={`${cat.parent_category}-${cat.name}`} className="flex items-center gap-1 bg-green-50 rounded-full pl-3 pr-1 py-1">
+                    <Checkbox
+                      checked={selectedCategories.includes(cat.name)}
+                      onCheckedChange={(checked) => {
+                        if (checked) setSelectedCategories([...selectedCategories, cat.name]);
+                        else setSelectedCategories(selectedCategories.filter((n) => n !== cat.name));
+                      }}
+                      className="mr-1"
+                    />
+                    <span className="text-xs text-slate-500 capitalize">{cat.parent_category}</span>
+                    <ChevronRight className="w-3 h-3 text-slate-400" />
+                    <span className="text-sm capitalize">{cat.name}</span>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-red-100 hover:text-red-600" onClick={() => openDeleteDialog("category", cat.name, cat.name)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Announcements Tab */}
+          <TabsContent value="announcements" className="space-y-6">
+            <div className="bg-white rounded-2xl border border-slate-100 p-6">
+              <h2 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>
+                Create Announcement
+              </h2>
+              <div className="flex gap-3">
+                <Textarea
+                  value={newAnnouncement}
+                  onChange={(e) => setNewAnnouncement(e.target.value)}
+                  placeholder="Enter announcement message..."
+                  className="flex-1 bg-slate-50"
+                  data-testid="announcement-input"
+                />
+                <Button onClick={handleCreateAnnouncement} disabled={!newAnnouncement.trim()} className="bg-indigo-600 hover:bg-indigo-700" data-testid="create-announcement-btn">
+                  <Megaphone className="w-4 h-4 mr-2" /> Post
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 p-6">
+              <h2 className="font-semibold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>
+                Active Announcements
+              </h2>
+              {announcements.length === 0 ? (
+                <p className="text-slate-500">No announcements</p>
+              ) : (
+                <div className="space-y-3">
+                  {announcements.map((ann) => (
+                    <div key={ann.announcement_id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl" data-testid={`announcement-${ann.announcement_id}`}>
+                      <div className="flex-1">
+                        <p className="text-slate-900">{ann.message}</p>
+                        <p className="text-xs text-slate-500 mt-1">{new Date(ann.created_at).toLocaleDateString()}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => handleToggleAnnouncement(ann.announcement_id, ann.is_active)}>
+                          {ann.is_active ? <Eye className="w-4 h-4" /> : <X className="w-4 h-4" />}
+                        </Button>
+                        <Button variant="destructive" size="sm" onClick={() => handleDeleteAnnouncement(ann.announcement_id)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
           {/* Settings Tab */}
           <TabsContent value="settings">
             <div className="bg-white rounded-2xl border border-slate-100 p-6">
-              <h2
-                className="font-semibold text-slate-900 mb-6"
-                style={{ fontFamily: "Manrope, sans-serif" }}
-              >
+              <h2 className="font-semibold text-slate-900 mb-6" style={{ fontFamily: "Manrope, sans-serif" }}>
                 Global Settings
               </h2>
-
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium text-slate-900">Max Portfolio Items</p>
-                    <p className="text-sm text-slate-500">
-                      Maximum number of items users can add to their portfolio
-                    </p>
+                    <p className="text-sm text-slate-500">Maximum number of items users can add to their portfolio</p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Input
-                      type="number"
-                      value={maxPortfolio}
-                      onChange={(e) => setMaxPortfolio(parseInt(e.target.value) || 7)}
-                      min={1}
-                      max={50}
-                      className="w-20 bg-slate-50"
-                      data-testid="max-portfolio-input"
-                    />
-                    <Button
-                      onClick={handleUpdateSettings}
-                      className="bg-indigo-600 hover:bg-indigo-700"
-                      data-testid="save-settings-btn"
-                    >
+                    <Input type="number" value={maxPortfolio} onChange={(e) => setMaxPortfolio(parseInt(e.target.value) || 7)} min={1} max={50} className="w-20 bg-slate-50" data-testid="max-portfolio-input" />
+                    <Button onClick={handleUpdateSettings} className="bg-indigo-600 hover:bg-indigo-700" data-testid="save-settings-btn">
                       Save
                     </Button>
                   </div>
@@ -421,12 +773,10 @@ const AdminDashboard = () => {
                 <div className="border-t pt-6">
                   <h3 className="font-medium text-slate-900 mb-2">Boosting Algorithm</h3>
                   <div className="bg-slate-50 rounded-xl p-4 text-sm text-slate-600">
-                    <p className="mb-2">
-                      <strong>How pins boost items:</strong>
-                    </p>
+                    <p className="mb-2"><strong>How pins boost items:</strong></p>
                     <ul className="list-disc list-inside space-y-1">
                       <li>Each pin adds 10 base points</li>
-                      <li>Points decay over time: <code>score = 10 / (1 + days_old × 0.1)</code></li>
+                      <li>Points decay over time: <code className="bg-slate-200 px-1 rounded">score = 10 / (1 + days_old × 0.1)</code></li>
                       <li>Pin today = 10 pts, 10 days old = 5 pts, 30 days old = 2.5 pts</li>
                       <li>Total boost = sum of all decayed pin scores</li>
                       <li>Items with higher boost appear first in their category</li>
@@ -445,22 +795,81 @@ const AdminDashboard = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteDialog.type}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this {deleteDialog.type}? This action cannot be undone.
+              Are you sure you want to delete "{deleteDialog.name}"? This action cannot be undone.
               {deleteDialog.type === "user" && " All their items, messages, and trades will also be deleted."}
+              {deleteDialog.type === "category" && " All subcategories will also be deleted."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="bg-red-600 hover:bg-red-700"
-            >
+            <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
               {isDeleting ? "Deleting..." : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Suspend User Dialog */}
+      <Dialog open={suspendDialog.open} onOpenChange={(open) => !open && setSuspendDialog({ open: false, user: null })}>
+        <DialogContent className="sm:max-w-md" data-testid="suspend-modal">
+          <DialogHeader>
+            <DialogTitle style={{ fontFamily: "Manrope, sans-serif" }}>
+              {suspendDialog.user?.is_suspended ? "Unsuspend" : "Suspend"} User
+            </DialogTitle>
+            <DialogDescription>
+              {suspendDialog.user?.is_suspended
+                ? `Unsuspend ${suspendDialog.user?.username || suspendDialog.user?.name}?`
+                : `How long do you want to suspend ${suspendDialog.user?.username || suspendDialog.user?.name}?`}
+            </DialogDescription>
+          </DialogHeader>
+
+          {!suspendDialog.user?.is_suspended && (
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Suspension Duration</Label>
+                <Select value={suspendDays.toString()} onValueChange={(v) => setSuspendDays(parseInt(v))}>
+                  <SelectTrigger className="bg-slate-50">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 day</SelectItem>
+                    <SelectItem value="3">3 days</SelectItem>
+                    <SelectItem value="7">7 days</SelectItem>
+                    <SelectItem value="14">14 days</SelectItem>
+                    <SelectItem value="30">30 days</SelectItem>
+                    <SelectItem value="90">90 days</SelectItem>
+                    <SelectItem value="365">1 year</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Reason (optional)</Label>
+                <Textarea
+                  value={suspendReason}
+                  onChange={(e) => setSuspendReason(e.target.value)}
+                  placeholder="Reason for suspension..."
+                  className="bg-slate-50"
+                  data-testid="suspend-reason-input"
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSuspendDialog({ open: false, user: null })} disabled={isSuspending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSuspend}
+              disabled={isSuspending}
+              className={suspendDialog.user?.is_suspended ? "bg-teal-600 hover:bg-teal-700" : "bg-red-600 hover:bg-red-700"}
+              data-testid="confirm-suspend-btn"
+            >
+              {isSuspending ? "Processing..." : suspendDialog.user?.is_suspended ? "Unsuspend" : "Suspend"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
