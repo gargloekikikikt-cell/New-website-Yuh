@@ -448,6 +448,8 @@ def main():
     tester.setup_test_data()
     
     # Run all admin test suites
+    tester.test_regular_endpoints()
+    tester.test_endpoint_structure_validation()
     tester.test_admin_stats()
     tester.test_user_management()
     tester.test_user_suspension()
@@ -455,7 +457,6 @@ def main():
     tester.test_category_management()
     tester.test_reports_management()
     tester.test_user_deletion()
-    tester.test_suspension_expiry()
     
     # Print final results
     print("\n" + "=" * 60)
